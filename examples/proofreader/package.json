@@ -1,0 +1,19 @@
+{
+  "name": "galley-proofreader",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Dialect-aware manuscript proofreader: 15 English dialects, CMOS, AP, APA, MLA, New Hart's Rules and a house style, with an optional Claude pass that protects the author's voice.",
+  "license": "MIT",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "build:artifact": "node build-artifact.js dist/galley.html",
+    "test": "node ../../tests/examples/proofreader-engine.test.js && node ../../tests/examples/proofreader-platform.test.js"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "0.129.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

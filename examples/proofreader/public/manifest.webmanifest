@@ -1,0 +1,10 @@
+{
+  "name": "Galley Proofreader",
+  "short_name": "Galley",
+  "description": "Dialect-aware proofreading against CMOS, AP, APA, MLA, New Hart's Rules or a house style.",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#eef1f5",
+  "theme_color": "#1d4ea8",
+  "icons": []
+}

@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!-- page:start -->
+<title>Galley Proofreader</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<meta name="description" content="Proofread manuscripts in fifteen dialects of English against CMOS, AP, APA, MLA, New Hart's Rules or a house style, without flattening the author's voice.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=Source+Sans+3:wght@400;600;700&display=swap">
+<link rel="stylesheet" href="styles.css">
+<!-- local:start -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#1d4ea8">
+<!-- local:end -->
+<!-- page:head-end -->
+</head>
+<body>
+<div class="app">
+  <header class="masthead">
+    <div class="brand"><span class="pilcrow" aria-hidden="true">&para;</span><span class="name">Galley</span></div>
+    <label class="doc-title"><span class="sr-only">Document title</span><input id="doc-title" type="text" autocomplete="off" spellcheck="false"></label>
+    <span id="sync-status" class="sync-status" role="status" aria-live="polite" data-tone="busy">Loading&hellip;</span>
+    <button id="theme-toggle" class="btn quiet small" type="button">Theme: system</button>
+  </header>
+
+  <section class="controls" aria-label="Proofreading settings">
+    <label class="field"><span>Dialect</span><select id="dialect"></select></label>
+    <label class="field"><span>Style guide</span><select id="style"></select></label>
+    <div class="field">
+      <span id="mode-label">Register</span>
+      <div class="segmented" role="radiogroup" aria-labelledby="mode-label">
+        <button type="button" role="radio" data-mode="creative" aria-checked="true" title="Fiction, memoir, essays: dialogue and the narrator's voice are protected">Creative</button>
+        <button type="button" role="radio" data-mode="formal" aria-checked="false" title="Academic and business writing: contractions and slang are flagged">Formal</button>
+      </div>
+    </div>
+    <label class="check"><input id="poetry" type="checkbox"> Poetry</label>
+    <span class="grow"></span>
+    <div class="ai-controls">
+      <label class="check"><input id="ai-flow" type="checkbox"> Flow suggestions</label>
+      <button id="ai-check" class="btn primary" type="button">Check with AI</button>
+    </div>
+    <div class="export">
+      <button id="export-btn" class="btn" type="button" aria-haspopup="true" aria-expanded="false" aria-controls="export-menu">Export</button>
+      <div id="export-menu" class="menu" hidden>
+        <p class="menu-label">Manuscript</p>
+        <button type="button" data-export="docx">Word document (.docx)</button>
+        <button type="button" data-export="pdf">PDF (.pdf)</button>
+        <button type="button" data-export="txt">Plain text (.txt)</button>
+        <p class="menu-label">Proofreading report</p>
+        <button type="button" data-export="report-docx">Report (.docx)</button>
+        <button type="button" data-export="report-txt">Report (.txt)</button>
+        <label class="check menu-check"><input id="export-double" type="checkbox" checked> Manuscript format (double-spaced)</label>
+      </div>
+    </div>
+  </section>
+
+  <nav class="tabs" role="tablist" aria-label="Views">
+    <button type="button" role="tab" data-tab="proof" aria-controls="tab-proof" aria-selected="true">Proofread</button>
+    <button type="button" role="tab" data-tab="dashboard" aria-controls="tab-dashboard" aria-selected="false" tabindex="-1">Dashboard</button>
+    <button type="button" role="tab" data-tab="history" aria-controls="tab-history" aria-selected="false" tabindex="-1">Documents &amp; history</button>
+    <button type="button" role="tab" data-tab="sheet" aria-controls="tab-sheet" aria-selected="false" tabindex="-1">Style sheet</button>
+  </nav>
+
+  <main>
+    <section id="tab-proof" class="tab-panel proof" role="tabpanel" aria-label="Proofread">
+      <div class="editor-col">
+        <div class="editor-bar">
+          <span id="word-count" class="meta"></span>
+          <span id="dialogue-share" class="meta"></span>
+          <span id="check-time" class="meta quiet-meta"></span>
+          <span class="grow"></span>
+          <button id="smart-quotes" class="btn small quiet" type="button" title="Convert straight quotes and apostrophes to curly ones">&ldquo;Smart&rdquo; quotes</button>
+          <button id="undo-fix" class="btn small quiet" type="button" disabled>Undo fix</button>
+        </div>
+        <div class="editor" id="editor">
+          <div class="backdrop" id="backdrop" aria-hidden="true"><div class="highlights" id="highlights"></div></div>
+          <textarea id="text" spellcheck="true" lang="en-US" aria-label="Manuscript text" aria-describedby="editor-help"></textarea>
+        </div>
+        <p id="editor-help" class="help">Type or paste your text. Findings update as you write. Click marked text to see why it is marked. Mark italics with *asterisks*. Keyboard: Alt+&darr;/&uarr; to step through findings, Alt+Enter to accept, Alt+Backspace for stet.</p>
+        <p id="profile-notice" class="notice" hidden></p>
+      </div>
+      <aside class="findings" aria-label="Findings">
+        <div class="findings-head">
+          <div>
+            <h2>Findings</h2>
+            <p id="finding-count" class="meta"></p>
+          </div>
+          <div class="stepper">
+            <button id="prev-issue" class="btn small quiet" type="button" aria-label="Previous finding">&uarr;</button>
+            <button id="next-issue" class="btn small quiet" type="button" aria-label="Next finding">&darr;</button>
+          </div>
+        </div>
+        <div id="chips" class="chips" aria-label="Filter by type"></div>
+        <div id="bulk" class="bulk"></div>
+        <div id="ai-status" class="ai-status" role="status" aria-live="polite" hidden></div>
+        <ol id="cards" class="cards"></ol>
+        <p id="cards-more" class="meta" hidden></p>
+        <div id="empty" class="empty" hidden>
+          <p class="empty-title">Clean proof.</p>
+          <p>No findings for this dialect and style guide. The AI check can look for problems that patterns cannot, such as agreement, tense and wrong words.</p>
+        </div>
+      </aside>
+    </section>
+
+    <section id="tab-dashboard" class="tab-panel dashboard" role="tabpanel" aria-label="Dashboard" hidden>
+      <div class="panel-head">
+        <div>
+          <h2>Your proofreading trends</h2>
+          <p class="meta">Built from your own checks. Live checking records at most one entry per document every ten minutes.</p>
+        </div>
+        <button id="ai-summary" class="btn primary" type="button">Explain my patterns</button>
+      </div>
+      <div id="dash-empty" class="empty">
+        <p class="empty-title">No history yet.</p>
+        <p>Proofread a few passages and your error rate, recurring mistakes and progress appear here.</p>
+      </div>
+      <div id="dash-body">
+        <section id="ai-summary-out" class="ai-summary" aria-live="polite" hidden></section>
+        <div id="kpis" class="kpis"></div>
+        <div class="dash-grid">
+          <figure class="chart-card">
+            <figcaption>Errors and warnings per 1,000 words</figcaption>
+            <div id="trend-chart" class="chart"></div>
+            <table id="trend-table" class="sr-only"></table>
+          </figure>
+          <figure class="chart-card">
+            <figcaption>Findings by type, all checks</figcaption>
+            <div id="category-bars" class="bars"></div>
+          </figure>
+        </div>
+        <section class="chart-card">
+          <h3>Recurring issues</h3>
+          <div class="table-wrap"><table id="recurring" class="data"></table></div>
+        </section>
+      </div>
+    </section>
+
+    <section id="tab-history" class="tab-panel history" role="tabpanel" aria-label="Documents and history" hidden>
+      <p id="role-note" class="role-note"></p>
+      <div class="hist-grid">
+        <section class="hist-col">
+          <div class="col-head">
+            <h2>Documents</h2>
+            <div class="row">
+              <button id="load-sample" class="btn small quiet" type="button">Add sample</button>
+              <button id="new-doc" class="btn small primary" type="button">New document</button>
+            </div>
+          </div>
+          <ul id="doc-list" class="list"></ul>
+        </section>
+        <section class="hist-col">
+          <div class="col-head"><h2 id="versions-title">Versions</h2></div>
+          <form id="version-form" class="version-form">
+            <label class="sr-only" for="version-note">Version note</label>
+            <input id="version-note" type="text" placeholder="Note, e.g. Sent to author" maxlength="80">
+            <button class="btn small" type="submit">Save version</button>
+          </form>
+          <ol id="version-list" class="list"></ol>
+        </section>
+        <section class="hist-col">
+          <div class="col-head"><h2>Activity</h2></div>
+          <ol id="activity-list" class="list activity"></ol>
+        </section>
+      </div>
+    </section>
+
+    <section id="tab-sheet" class="tab-panel sheet" role="tabpanel" aria-label="Style sheet" hidden>
+      <div class="sheet-paper">
+        <p class="eyebrow">Editorial style sheet</p>
+        <h2 id="sheet-title"></h2>
+        <p id="sheet-summary" class="lede"></p>
+        <p id="sheet-notice" class="notice" hidden></p>
+        <table id="sheet-table" class="sheet-table"></table>
+        <h3>Never flagged in Creative mode</h3>
+        <ul class="protected">
+          <li>Vocabulary and idiom of any dialect: <em>lift</em> or <em>elevator</em>, <em>wee</em>, <em>y&rsquo;all</em>, <em>innit</em>.</li>
+          <li>Nonstandard grammar inside dialogue: <em>&ldquo;He don&rsquo;t know,&rdquo;</em> <em>&ldquo;We was there.&rdquo;</em></li>
+          <li>Sentence fragments, sentences that start with <em>And</em> or <em>But</em>, split infinitives, final prepositions and the passive voice.</li>
+          <li>Rhythm and word order. Flow suggestions are optional and keep the author&rsquo;s words.</li>
+        </ul>
+        <h3>AI check</h3>
+        <p id="sheet-ai"></p>
+      </div>
+    </section>
+  </main>
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</div>
+<script src="lib/spelling.js"></script>
+<script src="lib/styles.js"></script>
+<script src="lib/wordlists.js"></script>
+<script src="lib/rules-core.js"></script>
+<script src="lib/rules-style.js"></script>
+<script src="lib/engine.js"></script>
+<script src="lib/ai.js"></script>
+<script src="lib/history.js"></script>
+<script src="lib/exporters.js"></script>
+<script src="lib/merge.js"></script>
+<script src="lib/sync.js"></script>
+<script src="js/store.js"></script>
+<script src="js/editor.js"></script>
+<script src="js/app.js"></script>
+<script src="js/panels.js"></script>
+<!-- local:start -->
+<script src="js/offline.js"></script>
+<!-- local:end -->
+<!-- page:end -->
+</body>
+</html>
