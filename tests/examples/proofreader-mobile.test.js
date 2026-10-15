@@ -183,6 +183,27 @@ async function runTests() {
     return undefined;
   });
 
+  await t('lint findings become readable annotations', () => {
+    const { parseLintXml, annotation, summaryTable } = require(path.join(ROOT, 'scripts', 'report-lint.js'));
+    const xml = `<issues format="6" by="lint 8.13.0">
+    <issue id="HardcodedText" severity="Warning" message="Hardcoded string &quot;Galley&quot;, use a resource&#xA;instead" category="I18N">
+        <location file="/w/examples/proofreader/android/app/src/main/AndroidManifest.xml" line="12" column="5"/>
+    </issue>
+    <issue id="NoLocation" severity="Error" message="100% broken, really">
+    </issue>
+</issues>`;
+    const issues = parseLintXml(xml);
+    assert.strictEqual(issues.length, 2);
+    assert.strictEqual(issues[0].message, 'Hardcoded string "Galley", use a resource\ninstead');
+    assert.strictEqual(issues[0].line, 12);
+    assert.strictEqual(
+      annotation(issues[0], '/w'),
+      '::warning file=examples/proofreader/android/app/src/main/AndroidManifest.xml,title=Android lint%3A HardcodedText,line=12::Hardcoded string "Galley", use a resource%0Ainstead'
+    );
+    assert.strictEqual(annotation(issues[1], '/w'), '::error title=Android lint%3A NoLocation::100%25 broken, really');
+    assert.ok(summaryTable(issues, '/w').includes('| Warning | HardcodedText | examples/proofreader/android/app/src/main/AndroidManifest.xml:12 |'));
+  });
+
   await t('the Android workflow follows the repository CI rules', () => {
     const yml = fs.readFileSync(path.join(__dirname, '..', '..', '.github', 'workflows', 'galley-android.yml'), 'utf8');
     for (const m of yml.matchAll(/uses:\s*(\S+)/g)) assert.match(m[1], /@[0-9a-f]{40}$/, `${m[1]} pinned by SHA`);

@@ -98,6 +98,10 @@ jobs:
         working-directory: examples/proofreader/android
         run: ./gradlew --no-daemon lintDebug
 
+      - name: Report lint findings
+        if: always()
+        run: node scripts/report-lint.js android/app/build/reports/lint-results-debug.xml
+
       - name: Check the APK
         working-directory: examples/proofreader/android
         run: |
