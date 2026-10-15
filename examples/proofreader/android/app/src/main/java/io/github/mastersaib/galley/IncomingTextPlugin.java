@@ -185,7 +185,8 @@ public class IncomingTextPlugin extends Plugin {
                 if (out.size() > MAX_FILE_BYTES) throw new TooLarge();
             }
             String text = new String(out.toByteArray(), StandardCharsets.UTF_8);
-            return text.startsWith("﻿") ? text.substring(1) : text;
+            // Drop a UTF-8 byte-order mark (U+FEFF) at the start of the file
+            return !text.isEmpty() && text.charAt(0) == 0xFEFF ? text.substring(1) : text;
         }
     }
 

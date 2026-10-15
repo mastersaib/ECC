@@ -154,6 +154,28 @@ async function runTests() {
     }
   });
 
+  await t('Android sources contain no invisible or byte-order-mark characters', () => {
+    // The repository's unicode check does not scan .java, .xml or .gradle files.
+    const files = [];
+    const walk = dir => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (!['build', 'assets', '.gradle'].includes(entry.name)) walk(full);
+        } else if (/\.(java|kt|xml|gradle|properties)$/.test(entry.name)) {
+          files.push(full);
+        }
+      }
+    };
+    walk(path.join(ROOT, 'android'));
+    assert.ok(files.length > 10);
+    for (const file of files) {
+      const text = fs.readFileSync(file, 'utf8');
+      assert.ok(!/[\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]/.test(text), `${path.relative(ROOT, file)} has an invisible character`);
+      if (file.endsWith('.java')) assert.ok(!/[^\t\n\r\x20-\x7E]/.test(text), `${path.relative(ROOT, file)} is printable ASCII`);
+    }
+  });
+
   await t('the API key is sealed with AES-GCM under a non-exportable Keystore key', () => {
     const src = fs.readFileSync(path.join(JAVA, 'SecureKeyPlugin.java'), 'utf8');
     assert.ok(src.includes('"AndroidKeyStore"'));
