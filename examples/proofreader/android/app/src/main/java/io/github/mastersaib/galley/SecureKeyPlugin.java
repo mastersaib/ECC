@@ -3,6 +3,7 @@ package io.github.mastersaib.galley;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.security.keystore.KeyGenParameterSpec;
+import android.security.keystore.KeyPermanentlyInvalidatedException;
 import android.security.keystore.KeyProperties;
 import android.util.Base64;
 
@@ -14,7 +15,9 @@ import com.getcapacitor.annotation.CapacitorPlugin;
 
 import java.nio.charset.StandardCharsets;
 import java.security.KeyStore;
+import java.security.UnrecoverableKeyException;
 
+import javax.crypto.AEADBadTagException;
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
@@ -28,7 +31,9 @@ import javax.crypto.spec.GCMParameterSpec;
  * written to SharedPreferences, and that file is excluded from cloud backup
  * and device transfer (see res/xml/backup_rules.xml and
  * data_extraction_rules.xml), because a restored ciphertext could never be
- * decrypted on another device anyway. The key is never logged.
+ * decrypted on another device anyway. capacitor.config.json sets
+ * loggingBehavior to "none", so Capacitor does not log plugin calls (and with
+ * them the key) even in debug builds.
  */
 @CapacitorPlugin(name = "SecureKey")
 public class SecureKeyPlugin extends Plugin {
@@ -45,19 +50,22 @@ public class SecureKeyPlugin extends Plugin {
     public void get(PluginCall call) {
         JSObject result = new JSObject();
         String stored = prefs().getString(FIELD, null);
-        if (stored == null) {
-            result.put("value", null);
-            call.resolve(result);
-            return;
+        String value = null;
+        if (stored != null) {
+            try {
+                value = decrypt(stored);
+            } catch (Unreadable e) {
+                // The stored value can never be decrypted (app data restored on
+                // another device, Keystore key deleted or invalidated): drop it.
+                prefs().edit().remove(FIELD).apply();
+            } catch (Exception e) {
+                // A Keystore failure that may pass (busy, locked, provider
+                // error): keep the stored key and let the page retry.
+                call.reject("The key store is not available right now. Try again.");
+                return;
+            }
         }
-        try {
-            result.put("value", decrypt(stored));
-        } catch (Exception e) {
-            // The Keystore key is gone (app data restored elsewhere, or the
-            // key was invalidated): the stored value is unreadable, so drop it.
-            prefs().edit().remove(FIELD).apply();
-            result.put("value", null);
-        }
+        result.put("value", value);
         call.resolve(result);
     }
 
@@ -97,12 +105,16 @@ public class SecureKeyPlugin extends Plugin {
         return getContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
 
-    private SecretKey secretKey() throws Exception {
+    /** The Keystore key, or null when there is none. */
+    private SecretKey existingKey() throws Exception {
         KeyStore keyStore = KeyStore.getInstance(KEYSTORE);
         keyStore.load(null);
-        if (keyStore.containsAlias(ALIAS)) {
-            return (SecretKey) keyStore.getKey(ALIAS, null);
-        }
+        return keyStore.containsAlias(ALIAS) ? (SecretKey) keyStore.getKey(ALIAS, null) : null;
+    }
+
+    private SecretKey secretKey() throws Exception {
+        SecretKey existing = existingKey();
+        if (existing != null) return existing;
         KeyGenerator generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, KEYSTORE);
         generator.init(
             new KeyGenParameterSpec.Builder(ALIAS, KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
@@ -123,13 +135,39 @@ public class SecureKeyPlugin extends Plugin {
         return Base64.encodeToString(iv, Base64.NO_WRAP) + ":" + Base64.encodeToString(sealed, Base64.NO_WRAP);
     }
 
+    /** Thrown when the stored value can never be decrypted on this device. */
+    private static final class Unreadable extends Exception {
+        private static final long serialVersionUID = 1L;
+
+        Unreadable(Throwable cause) {
+            super(cause);
+        }
+    }
+
     private String decrypt(String stored) throws Exception {
-        int colon = stored.indexOf(':');
-        if (colon < 0) throw new IllegalStateException("Malformed value");
-        byte[] iv = Base64.decode(stored.substring(0, colon), Base64.NO_WRAP);
-        byte[] sealed = Base64.decode(stored.substring(colon + 1), Base64.NO_WRAP);
-        Cipher cipher = Cipher.getInstance(TRANSFORMATION);
-        cipher.init(Cipher.DECRYPT_MODE, secretKey(), new GCMParameterSpec(TAG_BITS, iv));
-        return new String(cipher.doFinal(sealed), StandardCharsets.UTF_8);
+        byte[] iv;
+        byte[] sealed;
+        try {
+            int colon = stored.indexOf(':');
+            if (colon < 0) throw new IllegalArgumentException("Malformed value");
+            iv = Base64.decode(stored.substring(0, colon), Base64.NO_WRAP);
+            sealed = Base64.decode(stored.substring(colon + 1), Base64.NO_WRAP);
+        } catch (IllegalArgumentException e) {
+            throw new Unreadable(e);
+        }
+        SecretKey key;
+        try {
+            key = existingKey();
+        } catch (UnrecoverableKeyException e) {
+            throw new Unreadable(e);
+        }
+        if (key == null) throw new Unreadable(null);
+        try {
+            Cipher cipher = Cipher.getInstance(TRANSFORMATION);
+            cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(TAG_BITS, iv));
+            return new String(cipher.doFinal(sealed), StandardCharsets.UTF_8);
+        } catch (AEADBadTagException | KeyPermanentlyInvalidatedException | IllegalArgumentException e) {
+            throw new Unreadable(e);
+        }
     }
 }

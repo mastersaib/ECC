@@ -27,6 +27,8 @@
     }
   }
 
+  const STORAGE_FULL = 'This device\'s storage for Galley is full. Export the manuscript and delete old documents.';
+
   function writeJson(key, value) {
     try {
       localStorage.setItem(PREFIX + key, JSON.stringify(value));
@@ -91,7 +93,7 @@
         const doc = Object.assign({ id, title: 'Untitled manuscript', text: '', rev: 0, writeId: null }, fields, {
           updatedAt: new Date().toISOString()
         });
-        writeJson(`doc.${id}`, doc);
+        if (!writeJson(`doc.${id}`, doc)) throw new Error(STORAGE_FULL);
         saveIndex(doc);
         pushActivity('created', { docId: id, title: doc.title });
         return id;
@@ -118,7 +120,7 @@
       },
       async writeDoc(id, body) {
         const doc = Object.assign({ id }, body);
-        if (!writeJson(`doc.${id}`, doc)) throw new Error('This browser\'s storage is full. Export the manuscript and delete old documents.');
+        if (!writeJson(`doc.${id}`, doc)) throw new Error(STORAGE_FULL);
         saveIndex(doc);
       },
       async addVersion(id, version) {

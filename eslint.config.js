@@ -3,7 +3,7 @@ const globals = require('globals');
 
 module.exports = [
     {
-        ignores: ['.opencode/dist/**', '.cursor/**', 'node_modules/**', '.venv/**', 'venv/**', 'coverage/**', 'workflows/**/*.workflow.*', '.claude/workflows/**']
+        ignores: ['.opencode/dist/**', '.cursor/**', 'node_modules/**', '.venv/**', 'venv/**', 'coverage/**', 'workflows/**/*.workflow.*', '.claude/workflows/**', 'examples/proofreader/mobile/**', 'examples/proofreader/android/app/src/main/assets/**', 'examples/proofreader/android/**/build/**']
     },
     js.configs.recommended,
     {

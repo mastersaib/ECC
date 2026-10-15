@@ -310,17 +310,53 @@
     const card = document.querySelector(`#cards .card[data-id="${CSS.escape(id)}"]`);
     if (card) {
       card.classList.add('active');
-      if (opts && opts.scrollCard) card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      // On phones the cards sit below the editor and the docked bar shows the
+      // finding, so keep the manuscript in view instead of the card.
+      if (opts && opts.scrollCard && !compact.matches) card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }
     const issue = findIssue(id);
     if (issue && opts && opts.select) editor.select(issue, true);
     else if (issue) editor.reveal(issue);
     renderFindingBar(visibleIssues());
+    if (opts && opts.scrollCard && compact.matches) keepEditorInView();
+  }
+
+  /** Scroll so the whole editor sits above the docked bar (its top first, if it is taller). */
+  function keepEditorInView() {
+    const box = $('#editor').getBoundingClientRect();
+    const bar = $('#finding-bar');
+    const bottom = window.innerHeight - (bar.hidden ? 0 : bar.offsetHeight);
+    if (box.top < 0 || box.bottom > bottom) $('#editor').scrollIntoView({ block: 'start', behavior: 'smooth' });
   }
 
   // Phones: the findings list sits below the editor, so a docked bar shows the
   // current finding with its actions and steps through the rest.
   const compact = window.matchMedia ? window.matchMedia('(max-width: 900px)') : { matches: false };
+  let barObserver = null;
+
+  /** Mark the body while the on-screen keyboard is up (the viewport shrinks). */
+  function watchKeyboard() {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    let tallest = viewport.height * viewport.scale;
+    let wide = viewport.width * viewport.scale;
+    const update = () => {
+      // Pinch-zoom shrinks the visual viewport too; measure in layout pixels.
+      const width = viewport.width * viewport.scale;
+      const height = viewport.height * viewport.scale;
+      if (Math.abs(width - wide) > 1) {
+        wide = width; // rotated: start measuring again
+        tallest = height;
+      }
+      tallest = Math.max(tallest, height);
+      const field = document.activeElement;
+      const editing = Boolean(field && field.matches && field.matches('textarea, input, select, [contenteditable="true"]'));
+      document.body.dataset.keyboard = editing && height < tallest - 120 ? 'open' : 'closed';
+    };
+    viewport.addEventListener('resize', update);
+    document.addEventListener('focusin', update);
+    document.addEventListener('focusout', () => setTimeout(update, 0));
+  }
 
   function renderFindingBar(visible) {
     const bar = $('#finding-bar');
@@ -328,6 +364,14 @@
     bar.hidden = !show;
     document.body.classList.toggle('has-finding-bar', show);
     if (!show) return;
+    if (!barObserver && window.ResizeObserver) {
+      // The page reserves the bar's real height (it grows with long messages
+      // and the navigation-bar inset) so the last card is never under it.
+      barObserver = new window.ResizeObserver(() => {
+        if (bar.offsetHeight) document.documentElement.style.setProperty('--finding-bar-h', `${bar.offsetHeight}px`);
+      });
+      barObserver.observe(bar);
+    }
     let index = visible.findIndex(i => i.id === state.activeId);
     if (index < 0) {
       index = 0;
@@ -515,6 +559,17 @@
       state.store.addVersion(doc.id, { text: mirror.text, title: doc.title, reason: 'offline copy' }).catch(() => {});
       Store.writeJson(`mirror.${doc.id}`, null);
       toast('Edits made offline were saved in History, because the document changed meanwhile.');
+    }
+  }
+
+  /** Delete a document and its dashboard history, which quotes its text. */
+  async function forgetDoc(id) {
+    await state.store.deleteDoc(id);
+    Store.writeJson(`mirror.${id}`, null);
+    const kept = (state.history || []).filter(entry => entry.docId !== id);
+    if (kept.length !== (state.history || []).length) {
+      state.history = kept;
+      await state.store.saveHistory(kept);
     }
   }
 
@@ -737,6 +792,7 @@
     $('#fb-accept').addEventListener('click', event => accept(event.currentTarget.dataset.id));
     $('#fb-stet').addEventListener('click', event => stet(event.currentTarget.dataset.id));
     if (compact.addEventListener) compact.addEventListener('change', () => renderFindingBar(visibleIssues()));
+    watchKeyboard();
     $('#prev-issue').addEventListener('click', () => step(-1));
     $('#next-issue').addEventListener('click', () => step(1));
     $('#undo-fix').addEventListener('click', undoFix);
@@ -795,6 +851,7 @@
     allIssues,
     openDoc,
     newDoc,
+    forgetDoc,
     onEdited,
     save,
     setStatus,

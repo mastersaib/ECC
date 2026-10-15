@@ -2,9 +2,14 @@
   "appId": "io.github.mastersaib.galley",
   "appName": "Galley",
   "webDir": "mobile/www",
+  "loggingBehavior": "none",
+  "server": {
+    "errorPath": "update-webview.html"
+  },
   "android": {
     "allowMixedContent": false,
     "captureInput": false,
+    "minWebViewVersion": 100,
     "webContentsDebuggingEnabled": false
   },
   "plugins": {

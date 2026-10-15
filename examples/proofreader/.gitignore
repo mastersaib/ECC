@@ -1,3 +1,7 @@
 node_modules
 dist/
 mobile/www/
+# Signing keys must never be committed
+*.p12
+*.jks
+*.keystore

@@ -7,6 +7,8 @@
  */
 
 const assert = require('assert');
+const crypto = require('crypto');
+const { spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
@@ -21,7 +23,7 @@ const read = rel => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 async function test(name, fn) {
   try {
     const skipped = await fn();
-    console.log(`  ${skipped === 'skip' ? '-' : '✓'} ${name}${skipped === 'skip' ? ' (skipped: run npm ci in examples/proofreader)' : ''}`);
+    console.log(`  ${skipped === 'skip' ? '-' : '✓'} ${name}${skipped === 'skip' ? ' (skipped here)' : ''}`);
     return true;
   } catch (err) {
     console.log(`  ✗ ${name}`);
@@ -52,6 +54,18 @@ async function runTests() {
     assert.strictEqual(cfg.android.webContentsDebuggingEnabled, false);
     assert.ok(!cfg.plugins.Keyboard, 'SystemBars handles the keyboard on Android');
     assert.strictEqual(cfg.plugins.SystemBars.insetsHandling, 'css');
+  });
+
+  await t('Capacitor never logs plugin calls (the API key passes through them)', () => {
+    const cfg = JSON.parse(read('capacitor.config.json'));
+    assert.strictEqual(cfg.loggingBehavior, 'none');
+    assert.ok(!cfg.android.loggingBehavior, 'no Android override turns logging back on');
+  });
+
+  await t('old WebViews get an update page instead of a broken app', () => {
+    const cfg = JSON.parse(read('capacitor.config.json'));
+    assert.ok(cfg.android.minWebViewVersion >= 100, 'the bundled SDK targets Chrome 100');
+    assert.ok(read('scripts/build-mobile.js').includes(`'${cfg.server.errorPath}'`), 'build-mobile.js writes the error page');
   });
 
   await t('Gradle app id, namespace and SDK levels match Play requirements', () => {
@@ -107,6 +121,29 @@ async function runTests() {
     assert.strictEqual((fs.readFileSync(path.join(ANDROID, 'res', 'xml', 'data_extraction_rules.xml'), 'utf8').match(/<exclude /g) || []).length, 2);
   });
 
+  await t('a restarted activity never imports its intent again', () => {
+    const main = fs.readFileSync(path.join(JAVA, 'MainActivity.java'), 'utf8');
+    const process = fs.readFileSync(path.join(JAVA, 'ProcessTextActivity.java'), 'utf8');
+    for (const [name, src] of [['MainActivity', main], ['ProcessTextActivity', process]]) {
+      const mark = src.indexOf('IncomingTextPlugin.markConsumed(');
+      assert.ok(mark > 0 && mark < src.indexOf('super.onCreate(savedInstanceState)'), `${name} marks the intent before the bridge replays it`);
+      assert.ok(/savedInstanceState != null/.test(src), `${name} checks for a restart`);
+    }
+    assert.ok(main.includes('FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY'));
+    assert.ok(/public void onSaveInstanceState\(Bundle outState\)/.test(process), 'BridgeActivity declares it public');
+  });
+
+  await t('only the cache export folder is shared through the FileProvider', () => {
+    const xml = fs.readFileSync(path.join(ANDROID, 'res', 'xml', 'file_paths.xml'), 'utf8');
+    assert.deepStrictEqual([...xml.matchAll(/<([a-z-]+-path)\b/g)].map(m => m[1]), ['cache-path']);
+    assert.ok(read('public/js/native.js').includes("path: `exports/${safeName}`"));
+  });
+
+  await t('the splash theme applies the icon background', () => {
+    const styles = fs.readFileSync(path.join(ANDROID, 'res', 'values', 'styles.xml'), 'utf8');
+    assert.ok(styles.includes('parent="Theme.SplashScreen.IconBackground"'));
+  });
+
   await t('local plugins are registered before the bridge is created', () => {
     for (const file of ['MainActivity.java', 'ProcessTextActivity.java']) {
       const src = fs.readFileSync(path.join(JAVA, file), 'utf8');
@@ -145,6 +182,29 @@ async function runTests() {
     assert.strictEqual(context.window.GalleyNative, undefined);
   });
 
+  await t('native.js treats a missing plugin as absent (no registerPlugin without core JS)', () => {
+    const src = read('public/js/native.js');
+    assert.ok(!/registerPlugin\(/.test(src));
+    const added = [];
+    const context = {
+      window: { Capacitor: { isNativePlatform: () => true, getPlatform: () => 'ios', Plugins: {} }, addEventListener: (name) => added.push(name) },
+      document: { documentElement: { classList: { add() {} } } }
+    };
+    context.window.window = context.window;
+    vm.runInNewContext(src, context);
+    assert.strictEqual(context.window.GalleyNative.platform, 'ios');
+    assert.deepStrictEqual(added, ['galley:ready']);
+  });
+
+  await t('a full store refuses to create a document instead of pretending', async () => {
+    const context = {
+      localStorage: { getItem: () => null, setItem: () => { throw new Error('QuotaExceededError'); }, removeItem() {} }
+    };
+    vm.runInNewContext(read('public/js/store.js'), context);
+    const store = context.GalleyStore.createLocalStore();
+    await assert.rejects(store.createDoc({ title: 'Selection', text: 'x' }), /storage for Galley is full/);
+  });
+
   await t('the shared request builder sends the agreed Claude request', () => {
     const req = AI.buildRequest({ system: 'S', user: 'U' }, AI.ISSUES_SCHEMA);
     assert.strictEqual(req.model, 'claude-opus-5-5');
@@ -177,6 +237,10 @@ async function runTests() {
     assert.ok(!fs.existsSync(path.join(out, 'sw.js')));
     assert.ok(!fs.existsSync(path.join(out, 'js', 'offline.js')));
     assert.ok(fs.statSync(path.join(out, 'vendor', 'anthropic-sdk.js')).size > 100000);
+    assert.ok(html.startsWith('<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<meta http-equiv="Content-Security-Policy"'), 'the policy is the first thing after the charset');
+    assert.ok(/connect-src 'self' https:\/\/api\.anthropic\.com;/.test(builder.CSP));
+    assert.ok(/script-src 'self';/.test(builder.CSP));
+    assert.ok(fs.existsSync(path.join(out, 'update-webview.html')));
     const css = fs.readFileSync(path.join(out, 'fonts', 'fonts.css'), 'utf8');
     for (const family of ['Literata', 'Source Sans 3', 'IBM Plex Mono']) assert.ok(css.includes(`'${family}'`), family);
     for (const m of css.matchAll(/url\(([^)]+)\)/g)) assert.ok(fs.existsSync(path.join(out, 'fonts', m[1])), m[1]);
@@ -210,6 +274,29 @@ async function runTests() {
     assert.ok(/npm ci --ignore-scripts/.test(yml));
     assert.ok(/persist-credentials: false/.test(yml));
     assert.ok(/permissions:\s*\n\s*contents: read/.test(yml));
+    assert.ok(/push:\s*\n(?:\s*#.*\n)*\s*branches: \['\*\*'\]/.test(yml), 'tag pushes do not trigger it');
+    assert.ok(/set -euo pipefail\n[\s\S]*apksigner/.test(yml), 'a failed apksigner verify fails the step');
+    assert.ok(!/continue-on-error/.test(yml), 'lint errors fail the build');
+  });
+
+  await t('the Gradle wrapper JAR and distribution are pinned to official checksums', () => {
+    const yml = fs.readFileSync(path.join(__dirname, '..', '..', '.github', 'workflows', 'galley-android.yml'), 'utf8');
+    const jar = crypto.createHash('sha256').update(fs.readFileSync(path.join(ROOT, 'android', 'gradle', 'wrapper', 'gradle-wrapper.jar'))).digest('hex');
+    assert.ok(yml.includes(`echo "${jar}  gradle/wrapper/gradle-wrapper.jar" | sha256sum --check --strict`), 'CI checks the committed JAR');
+    const props = read('android/gradle/wrapper/gradle-wrapper.properties');
+    assert.match(props, /^distributionSha256Sum=[0-9a-f]{64}$/m);
+    assert.ok(props.includes('gradle-8.14.3-all.zip'));
+  });
+
+  await t('the signing-key helper refuses to write inside a git repository', () => {
+    if (process.platform === 'win32') return 'skip';
+    const target = path.join(ROOT, 'should-not-exist.p12');
+    const run = spawnSync('bash', [path.join(ROOT, 'scripts', 'create-signing-key.sh'), target], { encoding: 'utf8', input: '' });
+    assert.strictEqual(run.status, 1);
+    assert.match(run.stderr, /inside a git repository/);
+    assert.ok(!fs.existsSync(target));
+    assert.match(read('.gitignore'), /^\*\.p12$/m);
+    return undefined;
   });
 
   console.log('\n=== Test Results ===');

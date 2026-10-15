@@ -102,7 +102,9 @@ body {
 .app {
   max-width: 1440px;
   margin: 0 auto;
-  padding-block: 12px 40px;
+  /* In the Android app the page runs edge to edge, under the status bar. */
+  padding-top: calc(12px + env(safe-area-inset-top, 0px));
+  padding-bottom: calc(40px + env(safe-area-inset-bottom, 0px));
   padding-left: max(16px, env(safe-area-inset-left, 0px));
   padding-right: max(16px, env(safe-area-inset-right, 0px));
   display: grid;
@@ -678,8 +680,11 @@ body:not([data-tab="proof"]) .finding-bar { display: none !important; }
 .fb-actions { display: grid; grid-template-columns: 48px 1fr 1fr 48px; gap: 8px; }
 .fb-actions .btn { min-height: 44px; font-size: 1rem; }
 #fb-prev, #fb-next { font-size: 1.75rem; line-height: 1; border-color: var(--rule-strong); color: var(--ink); }
-body.has-finding-bar[data-tab="proof"] .app { padding-bottom: 190px; }
-body.has-finding-bar[data-tab="proof"] .toast { bottom: calc(180px + env(safe-area-inset-bottom, 0px)); }
+/* --finding-bar-h is the bar's measured height, bottom inset included. */
+body.has-finding-bar[data-tab="proof"]:not([data-keyboard="open"]) .app { padding-bottom: calc(var(--finding-bar-h, 190px) + 16px); }
+body.has-finding-bar[data-tab="proof"]:not([data-keyboard="open"]) .toast { bottom: calc(var(--finding-bar-h, 180px) + 8px); }
+/* While the on-screen keyboard is up, the bar would cover the line being typed. */
+body[data-keyboard="open"] .finding-bar { display: none !important; }
 
 /* ------------------------------------------------------------ mobile app */
 

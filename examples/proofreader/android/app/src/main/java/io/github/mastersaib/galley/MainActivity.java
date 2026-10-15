@@ -1,5 +1,6 @@
 package io.github.mastersaib.galley;
 
+import android.content.Intent;
 import android.os.Bundle;
 
 import com.getcapacitor.BridgeActivity;
@@ -16,6 +17,12 @@ public class MainActivity extends BridgeActivity {
     public void onCreate(Bundle savedInstanceState) {
         registerPlugin(IncomingTextPlugin.class);
         registerPlugin(SecureKeyPlugin.class);
+        Intent intent = getIntent();
+        if (savedInstanceState != null || (intent.getFlags() & Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY) != 0) {
+            // Recreated after a restart, or reopened from Recents with the
+            // intent that first started it: its text was imported then.
+            IncomingTextPlugin.markConsumed(intent);
+        }
         super.onCreate(savedInstanceState);
     }
 }

@@ -229,14 +229,24 @@ service worker or manifest, and `vendor/anthropic-sdk.js`, the official
 TypeScript SDK bundled for the browser by esbuild. `npx cap sync` copies it
 into the Android project.
 
+The bundle's `index.html` carries a Content-Security-Policy whose only
+network destination beyond the app itself is `https://api.anthropic.com`.
+Capacitor injects its bridge script right after `<head>`, before the policy
+applies, so `script-src` stays `'self'`. `capacitor.config.json` turns
+Capacitor's logging off (`loggingBehavior: "none"`), so plugin calls, the API
+key among them, never reach logcat, even in debug builds. Phones whose
+system WebView is older than version 100 get `update-webview.html`, a plain
+page that explains how to update it.
+
 `public/js/native.js` is the bridge. It runs only when
 `window.Capacitor.isNativePlatform()` is true and reaches plugins through
 `window.Capacitor.Plugins`, which the native shell injects (no `@capacitor/core`
-JavaScript, no bundler):
+JavaScript, no bundler). A plugin a platform lacks is treated as absent and
+its feature is turned off:
 
 | Plugin | Source | Used for |
 |---|---|---|
-| `IncomingText` | `IncomingTextPlugin.java` | Text from the selection menu and Share; returning corrected text |
+| `IncomingText` | `IncomingTextPlugin.java` | Text from the selection menu and Share (text or a `.txt` file); returning corrected text |
 | `SecureKey` | `SecureKeyPlugin.java` | The Anthropic API key, AES-256-GCM under a non-exportable Android Keystore key |
 | `Filesystem`, `Share` | `@capacitor/filesystem`, `@capacitor/share` | Exports: write to the app cache, then the system share sheet |
 | `App` | `@capacitor/app` | Back button (predictive back on Android 16), saving on pause |
@@ -250,19 +260,43 @@ sequenceDiagram
   participant PTA as ProcessTextActivity
   participant Page as Galley page
   Other->>PTA: PROCESS_TEXT (selection, readOnly flag), started for result
-  PTA->>Page: retained "incomingText" event
+  Page->>PTA: IncomingText.getHost()
+  PTA->>Page: retained "incomingText" event (text, canReturn, truncated)
   Page->>Page: open as a new document, show Replace selection
+  Page->>PTA: IncomingText.setReturnDoc({ docId })
+  Page->>Page: Replace selection: delete the copy and its history
   Page->>PTA: IncomingText.finish({ text })
   PTA-->>Other: RESULT_OK + EXTRA_PROCESS_TEXT
 ```
 
 `ProcessTextActivity` is a second `BridgeActivity` with the standard launch
 mode. It runs in the calling app's task, because the `singleTask`
-`MainActivity` could not return a result. Share (`ACTION_SEND`) goes to
-`MainActivity`, which forwards text arriving while it is open through
-`onNewIntent`.
+`MainActivity` could not return a result. Text goes back only when the
+caller asked for a result, its field is editable, and the selection was not
+cut short (senders cap it at 100,000 characters); otherwise the page offers
+**Copy text**. **Replace selection** always sends the selection's own
+document: if another document is open, the page switches back first. Back
+in this window always returns to the other app. Choosing **Proofread** on
+text inside Galley itself is cancelled with a short notice.
+
+Share (`ACTION_SEND`) goes to `MainActivity`, which forwards text arriving
+while it is open through `onNewIntent`. A shared `.txt` file (`EXTRA_STREAM`,
+`content:` URIs only, 2 MB at most) is read off the main thread.
+
+Each intent is imported once. When Android recreates an activity (after the
+process was killed, or a configuration change), the activity marks its
+intent consumed before the bridge replays it, so nothing is imported twice;
+`ProcessTextActivity` keeps the selection's document id in its saved state,
+and `getHost()` hands it back so the page reopens that document with its
+return bar.
 
 ### On-device AI
+
+The key is read from `SecureKey` again before every request, so a key
+replaced or removed in the selection window takes effect in the main window
+too. `SecureKey` deletes a stored value only when it can never be decrypted
+(Keystore key gone or invalidated, data restored on another device); a
+passing Keystore error is reported and the key is kept.
 
 With a key saved, `native.js` gives the app an AI backend that calls
 `client.beta.messages.stream(GalleyAI.buildRequest(...))` with
@@ -274,11 +308,17 @@ the app's error codes: rejected key, rate limit, offline, refusal, stopped.
 ### Builds and signing
 
 `.github/workflows/galley-android.yml` runs the tests, builds `mobile/www`,
-syncs and builds with Gradle, runs Android lint, fails if any native
-library appears in the APK (a 16 KB page-size guard), and uploads the APK
-(and AAB). With the `GALLEY_KEYSTORE_*` secrets it signs a release build;
-`app/build.gradle` reads signing only from the environment. `versionCode`
-is the run number, so every build installs over the last.
+syncs, checks the Gradle wrapper JAR against its official checksum (the
+distribution's checksum is pinned in `gradle-wrapper.properties`), and
+builds with Gradle. It fails if any native library appears in the APK (a
+16 KB page-size guard) or if `apksigner` rejects it, uploads the APK (and
+AAB) as unzipped files, then runs Android lint, whose findings appear as
+annotations. With the `GALLEY_KEYSTORE_*` secrets it signs a release build;
+`app/build.gradle` reads signing only from the environment, and the
+optional `GALLEY_CERT_SHA256` variable makes the job fail on a build signed
+with any other key. `versionCode` is the run number, so each signed build
+installs over the previous one. Unsigned debug builds use a different key on
+every run and cannot update one another.
 
 ## Not built, and what each would need
 

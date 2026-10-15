@@ -3,10 +3,14 @@ name: Galley Android
 # Builds the Galley proofreader Android app (examples/proofreader) on every
 # change to it. Signed release builds need the GALLEY_* signing secrets (see
 # examples/proofreader/scripts/create-signing-key.sh); without them the job
-# builds a debug APK whose key changes on every run.
+# builds a debug APK whose key changes on every run. Set the repository
+# variable GALLEY_CERT_SHA256 to the release key's SHA-256 fingerprint and
+# the job fails if a build is ever signed with a different key.
 
 on:
   push:
+    # Branch pushes only: path filters are not applied to tag pushes.
+    branches: ['**']
     paths:
       - 'examples/proofreader/**'
       - 'tests/examples/proofreader-*.test.js'
@@ -44,6 +48,7 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: '22.x'
+          package-manager-cache: false
 
       - name: Set up Java
         uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
@@ -64,11 +69,24 @@ jobs:
       - name: Build the mobile web bundle and sync Android
         run: npm run android:sync
 
+      - name: Check the Gradle wrapper
+        working-directory: examples/proofreader/android
+        # Official checksum of the Gradle 8.14.3 wrapper JAR (gradle.org/release-checksums).
+        # gradle-wrapper.properties pins the distribution's checksum the same way.
+        run: echo "7d3a4ac4de1c32b59bc6a4eb8ecb8e612ccd0cf1ae1e99f66902da64df296172  gradle/wrapper/gradle-wrapper.jar" | sha256sum --check --strict
+
       - name: Prepare release signing
         env:
           KEYSTORE_BASE64: ${{ secrets.GALLEY_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.GALLEY_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.GALLEY_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.GALLEY_KEY_PASSWORD }}
         run: |
           if [ -n "$KEYSTORE_BASE64" ]; then
+            if [ -z "$KEYSTORE_PASSWORD" ] || [ -z "$KEY_ALIAS" ] || [ -z "$KEY_PASSWORD" ]; then
+              echo "::error title=Incomplete signing secrets::GALLEY_KEYSTORE_BASE64 is set, but GALLEY_KEYSTORE_PASSWORD, GALLEY_KEY_ALIAS or GALLEY_KEY_PASSWORD is missing."
+              exit 1
+            fi
             printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/galley-release.p12"
             echo "GALLEY_KEYSTORE_PATH=$RUNNER_TEMP/galley-release.p12" >> "$GITHUB_ENV"
             echo "GALLEY_SIGNED=true" >> "$GITHUB_ENV"
@@ -92,48 +110,81 @@ jobs:
             ./gradlew --no-daemon --stacktrace assembleDebug
           fi
 
+      - name: Check the app
+        id: app
+        working-directory: examples/proofreader/android
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
+          EXPECTED_CERT: ${{ vars.GALLEY_CERT_SHA256 }}
+        run: |
+          set -euo pipefail
+          if [ "$GALLEY_SIGNED" = "true" ]; then
+            APK=app/build/outputs/apk/release/app-release.apk
+            NAME="galley-$RUN_NUMBER"
+          else
+            APK=app/build/outputs/apk/debug/app-debug.apk
+            NAME="galley-$RUN_NUMBER-debug"
+          fi
+          test -f "$APK"
+          if unzip -l "$APK" | grep -E '\.so$'; then
+            echo "::error::The APK contains native libraries; check 16 KB page alignment before publishing."
+            exit 1
+          fi
+          BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
+          "$BUILD_TOOLS/apksigner" verify --print-certs "$APK" > "$RUNNER_TEMP/certs.txt"
+          head -n 4 "$RUNNER_TEMP/certs.txt"
+          ACTUAL=$(grep -m 1 'certificate SHA-256 digest' "$RUNNER_TEMP/certs.txt" | awk '{print $NF}')
+          if [ "$GALLEY_SIGNED" = "true" ] && [ -n "$EXPECTED_CERT" ]; then
+            WANT=$(printf '%s' "$EXPECTED_CERT" | tr -d ': ' | tr 'A-F' 'a-f')
+            if [ "$ACTUAL" != "$WANT" ]; then
+              echo "::error title=Wrong signing key::The APK is signed with $ACTUAL, not the GALLEY_CERT_SHA256 key. Installed copies could not update to it."
+              exit 1
+            fi
+          fi
+          mkdir -p "$RUNNER_TEMP/out"
+          cp "$APK" "$RUNNER_TEMP/out/$NAME.apk"
+          echo "apk=$RUNNER_TEMP/out/$NAME.apk" >> "$GITHUB_OUTPUT"
+          if [ "$GALLEY_SIGNED" = "true" ]; then
+            cp app/build/outputs/bundle/release/app-release.aab "$RUNNER_TEMP/out/$NAME.aab"
+            echo "aab=$RUNNER_TEMP/out/$NAME.aab" >> "$GITHUB_OUTPUT"
+          fi
+          {
+            echo "### Galley Android build $RUN_NUMBER"
+            echo
+            if [ "$GALLEY_SIGNED" = "true" ]; then
+              echo "Signed release build: download **$NAME.apk** below. Later signed builds install over it as updates."
+            else
+              echo "Debug build signed with a throwaway key: download **$NAME.apk** below. Uninstall any earlier Galley build before installing (this deletes its documents), or add the signing secrets."
+            fi
+            echo
+            echo "Signing certificate SHA-256: \`$ACTUAL\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # One file per artifact, not zipped, so a phone can download and install it.
+      - name: Upload APK
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          path: ${{ steps.app.outputs.apk }}
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload Play bundle
+        if: steps.app.outputs.aab != ''
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          path: ${{ steps.app.outputs.aab }}
+          archive: false
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Android lint
-        id: lint
-        continue-on-error: true
         working-directory: examples/proofreader/android
         run: ./gradlew --no-daemon lintDebug
 
       - name: Report lint findings
         if: always()
         run: node scripts/report-lint.js android/app/build/reports/lint-results-debug.xml
-
-      - name: Check the APK
-        working-directory: examples/proofreader/android
-        run: |
-          APK=$(find app/build/outputs/apk -name '*.apk' | head -n 1)
-          echo "APK: $APK"
-          if unzip -l "$APK" | grep -E '\.so$'; then
-            echo "::error::The APK contains native libraries; check 16 KB page alignment before publishing."
-            exit 1
-          fi
-          BUILD_TOOLS=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
-          "$BUILD_TOOLS/apksigner" verify --print-certs "$APK" | head -n 4
-          {
-            echo "### Galley Android build ${{ github.run_number }}"
-            echo
-            if [ "$GALLEY_SIGNED" = "true" ]; then
-              echo "Signed release build. Install the APK from the **galley-android** artifact; later signed builds install as updates."
-            else
-              echo "Debug build signed with a throwaway key. Uninstall any earlier Galley build before installing (this deletes its documents), or add the signing secrets."
-            fi
-            echo
-            echo "Android lint: ${{ steps.lint.outcome }} (report in the **galley-android-lint** artifact)."
-          } >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Upload app
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: galley-android
-          path: |
-            examples/proofreader/android/app/build/outputs/apk/**/*.apk
-            examples/proofreader/android/app/build/outputs/bundle/**/*.aab
-          if-no-files-found: error
-          retention-days: 30
 
       - name: Upload lint report
         if: always()

@@ -29,6 +29,41 @@ const FONTS = [
 ];
 const SUBSETS = /-(latin|latin-ext)-\d+-(normal|italic)\.woff2/;
 
+// The bundle's only network destination is Anthropic's API, for the AI check.
+// Capacitor injects its bridge script right after <head>, before this policy
+// takes effect, so script-src can stay 'self'.
+const CSP = [
+  "default-src 'self'",
+  "script-src 'self'",
+  "style-src 'self' 'unsafe-inline'",
+  "font-src 'self'",
+  "img-src 'self' data: blob:",
+  "connect-src 'self' https://api.anthropic.com",
+  "object-src 'none'",
+  "base-uri 'none'"
+].join('; ');
+
+// Shown by Capacitor (server.errorPath) when the phone's WebView is older than
+// android.minWebViewVersion. Plain HTML: an old WebView cannot run the app.
+const OLD_WEBVIEW_PAGE = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Update Android System WebView</title>
+<style>
+  body { font: 17px/1.5 sans-serif; margin: 0; padding: 32px 24px; background: #EEF1F5; color: #1A2230; }
+  h1 { font-size: 22px; margin: 0 0 12px; }
+  @media (prefers-color-scheme: dark) { body { background: #0E1319; color: #E6EAF0; } }
+</style>
+</head>
+<body>
+<h1>Galley needs a newer WebView</h1>
+<p>This phone's Android System WebView is too old to run Galley. Open Google Play, search for <strong>Android System WebView</strong> (or <strong>Chrome</strong> on Android 7 to 9), update it, then open Galley again.</p>
+</body>
+</html>
+`;
+
 function copyTree(from, to, rel) {
   fs.mkdirSync(to, { recursive: true });
   for (const entry of fs.readdirSync(from, { withFileTypes: true })) {
@@ -70,7 +105,10 @@ function buildIndex() {
   html = html.replace(/<link rel="preconnect"[^>]*>\n?/g, '');
   html = html.replace(/<link rel="stylesheet" href="https:\/\/fonts\.googleapis\.com[^>]*>/, '<link rel="stylesheet" href="fonts/fonts.css">');
   if (/fonts\.googleapis|sw\.js|offline\.js/.test(html)) throw new Error('index.html still references web-only resources');
+  if (!html.includes('<head>\n<meta charset="utf-8">')) throw new Error('index.html must start its head with <meta charset> for the CSP');
+  html = html.replace('<head>\n<meta charset="utf-8">', `<head>\n<meta charset="utf-8">\n<meta http-equiv="Content-Security-Policy" content="${CSP}">`);
   fs.writeFileSync(file, html);
+  fs.writeFileSync(path.join(OUT, 'update-webview.html'), OLD_WEBVIEW_PAGE);
 }
 
 async function buildSdk() {
@@ -110,4 +148,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main, OUT };
+module.exports = { main, OUT, CSP };

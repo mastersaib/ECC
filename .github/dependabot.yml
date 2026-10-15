@@ -21,6 +21,27 @@ updates:
         patterns:
           - "*"
 
+  # The Galley example app (web and Android) pins its own npm dependencies.
+  - package-ecosystem: "npm"
+    directory: "/examples/proofreader"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    labels:
+      - "dependencies"
+      - "npm"
+    groups:
+      proofreader-npm-security:
+        applies-to: "security-updates"
+        patterns:
+          - "*"
+      proofreader-npm-minor-and-patch:
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

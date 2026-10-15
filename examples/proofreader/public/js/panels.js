@@ -293,7 +293,7 @@
           return;
         }
         try {
-          await state.store.deleteDoc(doc.id);
+          await app.forgetDoc(doc.id);
           if (current) {
             const next = (state.docs || []).find(d => d.id !== doc.id);
             if (next) await app.openDoc(next.id);

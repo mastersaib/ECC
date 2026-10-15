@@ -134,8 +134,10 @@ pieces where a phone needs them:
 - **Proofread from any app.** Select text anywhere, choose **Proofread** in
   the selection menu, fix it in Galley, then tap **Replace selection** to send
   the corrected text back into the field you selected it from. Apps that
-  only display text (a web page, a PDF) get **Done** instead. **Share >
-  Galley** opens shared text as a new document.
+  only display text (a web page, a PDF) get **Copy text** and **Done**
+  instead. Galley deletes its copy of the selection when you go back.
+  **Share > Galley** opens shared text, or a shared `.txt` file, as a new
+  document.
 - **Export through the share sheet.** DOCX, PDF, text and the report go to
   Files, Drive, mail or Word.
 - **AI check with your own Anthropic API key.** The key is encrypted with an
@@ -143,7 +145,8 @@ pieces where a phone needs them:
   backups. Checked text goes straight from the phone to Anthropic; there is
   no Galley server.
 - **Offline.** Fonts and the app are on the phone; documents are saved on
-  the phone.
+  the phone. If Android backup is on, your documents are included in the
+  phone's backup to your Google account, so they survive a new phone.
 - **Phone layout.** A docked bar steps through findings with Accept, Stet
   and Next; settings fold into one line; the back button closes menus first.
 
@@ -152,13 +155,14 @@ hosting and is not in the Android app. Use the hosted page for team work.
 
 ### Get the APK
 
-1. GitHub disables Actions on forks. Open the repository's **Actions** tab
-   and enable workflows.
+1. If the repository's **Actions** tab says workflows are disabled (GitHub's
+   default for forks), enable them.
 2. Push a change under `examples/proofreader`, or run **Galley Android**
    from the Actions tab.
-3. Download the **galley-android** artifact from the run, unzip it, and open
-   the APK on your phone. Allow your file manager to install unknown apps
-   when Android asks.
+3. Open the run and download the APK under **Artifacts**
+   (`galley-<run>-debug.apk`, or `galley-<run>.apk` when signed). It
+   downloads as an APK, not a zip. Open it on your phone and allow your
+   browser or file manager to install unknown apps when Android asks.
 
 Without signing secrets the workflow makes a debug build with a throwaway
 key. Each such build is a different app as far as Android is concerned, so
@@ -167,11 +171,14 @@ its documents. For builds that update in place, create one signing key and
 store it in GitHub secrets:
 
 ```bash
-./scripts/create-signing-key.sh   # needs a JDK; prints the four secrets to add
+./scripts/create-signing-key.sh   # needs a JDK; writes ~/galley-release.p12
 ```
 
-Keep the `.p12` file and its password safe and offline. If they are lost,
-no later build can update the installed app.
+It prints the four secrets to add, and a fingerprint for an optional
+`GALLEY_CERT_SHA256` repository variable: with it set, CI fails any build
+signed with a different key. The script refuses to write the key inside a
+git repository. Keep the `.p12` file and its password safe and offline. If
+they are lost, no later build can update the installed app.
 
 ### Build on your computer
 
@@ -180,7 +187,7 @@ Needs Node 22+, JDK 21 and the Android SDK (Android Studio installs it).
 ```bash
 npm ci
 npm run android:sync    # builds mobile/www (bundled fonts, SDK) and copies it into android/
-npx cap open android    # or: npm run android:build
+npx cap open android    # or: npm run android:build (any OS)
 ```
 
 ### Publishing on Google Play

@@ -12,7 +12,8 @@
  *   - the hardware back button, and saving when the app goes to background
  *
  * Plugins are reached through the Capacitor bridge the native shell injects
- * (window.Capacitor), so the page needs no bundler.
+ * (window.Capacitor), so the page needs no bundler. A plugin the platform
+ * lacks (IncomingText on iOS, for now) just turns its feature off.
  */
 (function () {
   'use strict';
@@ -21,7 +22,9 @@
   if (!Cap || typeof Cap.isNativePlatform !== 'function' || !Cap.isNativePlatform()) return;
 
   const AI = window.GalleyAI;
-  const plugin = name => (Cap.Plugins && Cap.Plugins[name]) || Cap.registerPlugin(name);
+  // The native shell injects Capacitor.Plugins; there is no registerPlugin
+  // without @capacitor/core's JavaScript, so a missing plugin is just null.
+  const plugin = name => (Cap.Plugins && Cap.Plugins[name]) || null;
   const App = plugin('App');
   const Filesystem = plugin('Filesystem');
   const Share = plugin('Share');
@@ -30,7 +33,11 @@
 
   let apiKey = null;
   let sdk = null;
-  let returnTo = null; // the selection this window was opened for
+  // True in the window opened from another app's text-selection menu, which
+  // lives in that app's task; selection describes what it was opened for:
+  // { canReturn, truncated, failed, docId }, docId holding the selection.
+  let selectionWindow = false;
+  let selection = null;
 
   // ------------------------------------------------------------ helpers
 
@@ -60,10 +67,18 @@
     return window.GalleyApp;
   }
 
+  /** Switch the AI backend; the style sheet describes it, so redraw it if open. */
+  function useAi(backend) {
+    app().setAi(backend);
+    const panels = window.GalleyPanels;
+    if (panels && panels.currentTab() === 'sheet') panels.renderSheet();
+  }
+
   // ---------------------------------------------------------------- export
 
   /** Write the file to the app cache and offer it through the share sheet. */
   async function saveFile(filename, data) {
+    if (!Filesystem || !Share) throw new Error('Saving files is not available in this version of the app.');
     const safeName = filename.replace(/[\\/:*?"<>|]+/g, '-');
     const written = await Filesystem.writeFile({
       path: `exports/${safeName}`,
@@ -118,6 +133,13 @@
     return {
       kind: 'device',
       async run(prompt, signal, body) {
+        // Another Galley window (the selection menu's) may have replaced or
+        // removed the key since this one loaded it.
+        await loadKey();
+        if (!apiKey) {
+          useAi(null);
+          throw Object.assign(new Error('No API key is saved on this phone. Add one in AI settings.'), { code: 'server' });
+        }
         const Anthropic = await loadSdk();
         const schema = body && body.kind === 'summary' ? AI.SUMMARY_SCHEMA : AI.ISSUES_SCHEMA;
         try {
@@ -132,11 +154,12 @@
   }
 
   async function loadKey() {
+    if (!SecureKey) return;
     try {
       const result = await SecureKey.get();
       apiKey = result && result.value ? result.value : null;
     } catch (_err) {
-      apiKey = null;
+      // The key store was briefly unavailable: keep what this window has.
     }
   }
 
@@ -175,10 +198,11 @@
           return;
         }
         try {
+          if (!SecureKey) throw new Error('Keys cannot be stored securely in this version of the app.');
           await SecureKey.set({ value });
           apiKey = value;
           input.value = '';
-          app().setAi(aiBackend());
+          useAi(aiBackend());
           dialog.close();
           app().toast('AI check is ready.', { label: 'Check now', run: () => app().runAiCheck() });
         } catch (err) {
@@ -186,9 +210,9 @@
         }
       });
       remove.addEventListener('click', async () => {
-        await SecureKey.clear().catch(() => {});
+        if (SecureKey) await SecureKey.clear().catch(() => {});
         apiKey = null;
-        app().setAi(null);
+        useAi(null);
         dialog.close();
         app().toast('API key removed from this phone.');
       });
@@ -216,40 +240,123 @@
     return bar;
   }
 
-  function showReturnBar(item) {
+  /**
+   * Close the selection window, sending text back when given. The selection
+   * was only a scratch copy, so its document and history go first.
+   */
+  async function finishSelection(text) {
+    if (selection && selection.docId) {
+      const docId = selection.docId;
+      if (app().state.docId === docId) app().state.dirty = false; // no save after deleting
+      await app().forgetDoc(docId).catch(() => {});
+    }
+    return IncomingText.finish(text === undefined ? {} : { text });
+  }
+
+  /** The selection's document text, saving first when it is the open one. */
+  async function selectionText() {
+    await app().save();
+    return app().editor.text;
+  }
+
+  async function replaceSelection() {
+    if (app().state.docId !== selection.docId) {
+      // The user opened another document meanwhile: show the selection's
+      // own document before anything is sent back.
+      if (!selection.docId || !(await app().openDoc(selection.docId))) {
+        app().toast('The selection\'s document is gone, so there is nothing to send back.');
+        return;
+      }
+      app().toast('This is the selection\'s document. Tap Replace selection again to send it back.');
+      return;
+    }
+    const text = await selectionText();
+    if (!selection.canReturn || text.length > 100000) {
+      app().toast(selection.canReturn ? 'The corrected text is too long to send back. Copy it instead.' : 'That app does not accept changes back.');
+      return;
+    }
+    finishSelection(text).catch(err => app().toast(err.message));
+  }
+
+  async function copyText(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch (_err) {
+      // Older WebViews: copy through a temporary field.
+      const field = el('textarea', { class: 'sr-only', 'aria-hidden': 'true' });
+      field.value = text;
+      document.body.append(field);
+      field.select();
+      const ok = document.execCommand('copy');
+      field.remove();
+      return ok;
+    }
+  }
+
+  function showReturnBar() {
     const bar = returnBar();
-    const canReplace = !item.readOnly;
+    const canReturn = selection.canReturn && !selection.failed;
+    let note = 'Proofreading a selection from another app. Galley deletes this copy when you return.';
+    if (selection.failed) note = 'Galley could not save this text, so it cannot be proofread here.';
+    else if (selection.truncated) note = 'The other app sent only part of a long selection, so it cannot be replaced. Copy the result instead.';
+    else if (!canReturn) note = 'That app does not accept changes back. Copy the result instead.';
+    let action = null;
+    if (canReturn) {
+      action = el('button', { class: 'btn primary', type: 'button', text: 'Replace selection', onclick: replaceSelection });
+    } else if (!selection.failed) {
+      action = el('button', {
+        class: 'btn primary', type: 'button', text: 'Copy text',
+        onclick: async () => app().toast((await copyText(await selectionText())) ? 'Copied.' : 'Copy failed. Select the text and copy it.')
+      });
+    }
     bar.replaceChildren(
-      el('p', { text: canReplace ? 'Proofreading a selection from another app.' : 'Proofreading text from another app. That app does not accept changes back.' }),
+      el('p', { text: note }),
       el('div', { class: 'row' }, [
         el('button', {
-          class: 'btn', type: 'button', text: canReplace ? 'Cancel' : 'Done',
-          onclick: () => IncomingText.finish({}).catch(() => {})
+          class: 'btn', type: 'button', text: canReturn ? 'Cancel' : 'Done',
+          onclick: () => finishSelection().catch(() => {})
         }),
-        canReplace ? el('button', {
-          class: 'btn primary', type: 'button', text: 'Replace selection',
-          onclick: async () => {
-            await app().save();
-            IncomingText.finish({ text: app().editor.text }).catch(err => app().toast(err.message));
-          }
-        }) : null
+        action
       ])
     );
     bar.hidden = false;
   }
 
   async function openIncoming(item) {
-    if (!item || !item.text) return;
+    if (!item) return;
+    if (item.error) {
+      app().toast(item.error);
+      return;
+    }
+    if (!item.text) return;
     const when = new Date().toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
     const title = item.title || `${item.source === 'process' ? 'Selection' : 'Shared text'}, ${when}`;
-    await app().newDoc({ title, text: item.text });
-    if (window.GalleyPanels) window.GalleyPanels.showTab('proof');
-    if (item.source === 'process') {
-      returnTo = item;
-      showReturnBar(item);
-    } else {
-      app().toast('Shared text opened as a new document.');
+    let docId = null;
+    try {
+      docId = await app().newDoc({ title, text: item.text });
+    } catch (err) {
+      app().toast(err.message || 'Galley could not save this text.');
     }
+    const opened = Boolean(docId) && app().state.docId === docId;
+    if (item.source !== 'process') {
+      if (opened) {
+        if (window.GalleyPanels) window.GalleyPanels.showTab('proof');
+        app().toast(item.truncated ? 'Shared text opened as a new document (only the first 500,000 characters).' : 'Shared text opened as a new document.');
+      }
+      return;
+    }
+    if (window.GalleyPanels) window.GalleyPanels.showTab('proof');
+    selection = { canReturn: Boolean(item.canReturn), truncated: Boolean(item.truncated), failed: !opened, docId: opened ? docId : null };
+    if (opened) IncomingText.setReturnDoc({ docId }).catch(() => {});
+    showReturnBar();
+  }
+
+  /** In the selection window after a restart, reopen the selection's document. */
+  async function restoreSelection(host) {
+    selection = { canReturn: Boolean(host.canReturn), truncated: false, failed: false, docId: host.docId };
+    if (selection.docId && app().state.docId !== selection.docId) await app().openDoc(selection.docId);
+    showReturnBar();
   }
 
   // ------------------------------------------------------------- lifecycle
@@ -262,6 +369,8 @@
     const menu = document.getElementById('export-menu');
     if (menu && !menu.hidden) {
       menu.hidden = true;
+      const button = document.getElementById('export-btn');
+      if (button) button.setAttribute('aria-expanded', 'false');
       return true;
     }
     const controls = document.querySelector('.controls.open');
@@ -279,8 +388,9 @@
       panels.showTab('proof');
       return;
     }
-    if (returnTo) {
-      IncomingText.finish({}).catch(() => {});
+    if (selectionWindow) {
+      // The selection window lives in the other app's task: Back returns there.
+      finishSelection().catch(() => {});
       return;
     }
     App.minimizeApp();
@@ -299,15 +409,28 @@
 
   window.addEventListener('galley:ready', async () => {
     await ready;
-    app().setAi(aiBackend());
-    App.addListener('backButton', onBack);
-    App.addListener('pause', () => app().save());
-    IncomingText.addListener('incomingText', openIncoming);
-    try {
-      const pending = await IncomingText.getPending();
-      if (pending && pending.item) await openIncoming(pending.item);
-    } catch (_err) {
-      // no text was sent to the app
+    useAi(aiBackend());
+    if (App) {
+      App.addListener('backButton', onBack);
+      App.addListener('pause', () => app().save());
+      App.addListener('resume', async () => {
+        await loadKey();
+        useAi(aiBackend());
+      });
     }
+    if (IncomingText) {
+      try {
+        const host = await IncomingText.getHost();
+        selectionWindow = Boolean(host && host.mode === 'process');
+        if (selectionWindow && host.docId) await restoreSelection(host);
+      } catch (_err) {
+        // an older shell without getHost: incoming text still arrives below
+      }
+      IncomingText.addListener('incomingText', openIncoming);
+    }
+    // Exports only need to live until the share sheet has read them. Only the
+    // main window clears them, so a selection window never removes a file
+    // the main window is still sharing.
+    if (Filesystem && !selectionWindow) Filesystem.rmdir({ path: 'exports', directory: 'CACHE', recursive: true }).catch(() => {});
   });
 }());

@@ -11,7 +11,7 @@
     "test": "node ../../tests/examples/proofreader-engine.test.js && node ../../tests/examples/proofreader-platform.test.js && node ../../tests/examples/proofreader-mobile.test.js",
     "android:sync": "node scripts/build-mobile.js && cap sync android",
     "android:open": "cap open android",
-    "android:build": "npm run android:sync && cd android && ./gradlew assembleDebug",
+    "android:build": "npm run android:sync && node scripts/gradle.js assembleDebug",
     "build:mobile": "node scripts/build-mobile.js"
   },
   "dependencies": {

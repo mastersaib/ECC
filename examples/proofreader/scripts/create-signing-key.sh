@@ -7,15 +7,24 @@
 #   2. Add four repository secrets (GitHub > Settings > Secrets and variables
 #      > Actions): GALLEY_KEYSTORE_BASE64, GALLEY_KEYSTORE_PASSWORD,
 #      GALLEY_KEY_ALIAS and GALLEY_KEY_PASSWORD. This script prints the base64.
+#   3. Optionally add the repository variable GALLEY_CERT_SHA256 (same page,
+#      Variables tab) so CI refuses builds signed with any other key.
 #
-# Never commit the .p12 file or the password.
+# The key is written outside the repository (default: ~/galley-release.p12)
+# so it can never be committed by accident.
 set -euo pipefail
 
-OUT="${1:-galley-release.p12}"
+OUT="${1:-$HOME/galley-release.p12}"
 ALIAS="galley"
 
 if [ -e "$OUT" ]; then
   echo "$OUT already exists. Refusing to overwrite a signing key." >&2
+  exit 1
+fi
+DIR=$(cd "$(dirname "$OUT")" && pwd)
+if git -C "$DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  echo "$DIR is inside a git repository, where the key could be committed by accident." >&2
+  echo "Choose a path outside it, for example: $0 \"\$HOME/galley-release.p12\"" >&2
   exit 1
 fi
 
@@ -26,11 +35,17 @@ if [ "${#PASSWORD}" -lt 12 ]; then
   exit 1
 fi
 
+# Pass the password through the environment, not the command line, so it
+# does not show up in the process list.
+export GALLEY_KEYTOOL_PASSWORD="$PASSWORD"
 keytool -genkeypair \
   -keystore "$OUT" -storetype PKCS12 \
   -alias "$ALIAS" -keyalg RSA -keysize 4096 -validity 10950 \
-  -storepass "$PASSWORD" -keypass "$PASSWORD" \
+  -storepass:env GALLEY_KEYTOOL_PASSWORD -keypass:env GALLEY_KEYTOOL_PASSWORD \
   -dname "CN=Galley Proofreader"
+FINGERPRINT=$(keytool -list -v -keystore "$OUT" -storetype PKCS12 -storepass:env GALLEY_KEYTOOL_PASSWORD -alias "$ALIAS" \
+  | awk '/SHA256:/ { print $2; exit }')
+unset GALLEY_KEYTOOL_PASSWORD
 
 echo
 echo "Created $OUT (valid for 30 years). Add these GitHub secrets:"
@@ -42,5 +57,5 @@ echo
 base64 < "$OUT" | tr -d '\n'
 echo
 echo
-echo "SHA-256 fingerprint (needed if you register the app for developer verification):"
-keytool -list -keystore "$OUT" -storetype PKCS12 -storepass "$PASSWORD" -alias "$ALIAS" | grep -i 'SHA-256' || true
+echo "And this repository variable (also needed for Play or developer verification):"
+echo "  GALLEY_CERT_SHA256        $FINGERPRINT"
