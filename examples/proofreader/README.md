@@ -10,10 +10,13 @@ ask, minimal flow edits.
 ```
 public/            the app (plain HTML, CSS and browser JavaScript, no build step)
   lib/             engine, dialects, style guides, AI prompts, export, merge, sync
-  js/              editor, controller, panels, storage, offline support
+  js/              editor, controller, panels, storage, offline, mobile bridge
+android/           the Android app (Capacitor project with Galley's native plugins)
+scripts/           mobile bundle build and signing-key helper
 server.js          optional local server: static files + Claude proxy
 build-artifact.js  single-file build for hosting on claude.ai
 ARCHITECTURE.md    module map, data model, sync protocol, API reference
+PRIVACY.md         privacy policy for the Android app
 ```
 
 ## Run it
@@ -23,6 +26,7 @@ ARCHITECTURE.md    module map, data model, sync protocol, API reference
 | Open the file | Rule engine, export, dashboard, history in this browser. Works offline. | Open `public/index.html` |
 | Local server | All of the above, plus the AI check and offline caching | `npm install`, then `ANTHROPIC_API_KEY=... npm start`, then open <http://127.0.0.1:4317> |
 | Hosted on claude.ai | All of the above, plus a shared workspace: sync across devices, teammates, roles, version history and activity log. The AI check runs on each viewer's own Claude account. | `npm run build:artifact`, then publish `dist/galley.html` with the capabilities in [ARCHITECTURE.md](ARCHITECTURE.md#hosted-capabilities) |
+| Android app | The proofreader on your phone, offline. Proofread text selected in any app and send the correction back. AI check with your own Anthropic API key. | See [Android app](#android-app) |
 
 The server binds to `127.0.0.1` by default. It reads `PORT`, `HOST` and
 `GALLEY_MODEL` (default `claude-opus-5-5`) from the environment. The API key
@@ -122,11 +126,88 @@ one suggestion per paragraph.
   paragraph at the same moment keep their own wording, and the other version
   is saved in History; it is never lost.
 
+## Android app
+
+The Android app is the same proofreader in a Capacitor shell, with native
+pieces where a phone needs them:
+
+- **Proofread from any app.** Select text anywhere, choose **Proofread** in
+  the selection menu, fix it in Galley, then tap **Replace selection** to send
+  the corrected text back into the field you selected it from. Apps that
+  only display text (a web page, a PDF) get **Done** instead. **Share >
+  Galley** opens shared text as a new document.
+- **Export through the share sheet.** DOCX, PDF, text and the report go to
+  Files, Drive, mail or Word.
+- **AI check with your own Anthropic API key.** The key is encrypted with an
+  Android Keystore key that never leaves the phone, and it is left out of
+  backups. Checked text goes straight from the phone to Anthropic; there is
+  no Galley server.
+- **Offline.** Fonts and the app are on the phone; documents are saved on
+  the phone.
+- **Phone layout.** A docked bar steps through findings with Accept, Stet
+  and Next; settings fold into one line; the back button closes menus first.
+
+The shared workspace (team sync, roles, activity log) comes from claude.ai
+hosting and is not in the Android app. Use the hosted page for team work.
+
+### Get the APK
+
+1. GitHub disables Actions on forks. Open the repository's **Actions** tab
+   and enable workflows.
+2. Push a change under `examples/proofreader`, or run **Galley Android**
+   from the Actions tab.
+3. Download the **galley-android** artifact from the run, unzip it, and open
+   the APK on your phone. Allow your file manager to install unknown apps
+   when Android asks.
+
+Without signing secrets the workflow makes a debug build with a throwaway
+key. Each such build is a different app as far as Android is concerned, so
+installing a newer one means uninstalling the old one first, which deletes
+its documents. For builds that update in place, create one signing key and
+store it in GitHub secrets:
+
+```bash
+./scripts/create-signing-key.sh   # needs a JDK; prints the four secrets to add
+```
+
+Keep the `.p12` file and its password safe and offline. If they are lost,
+no later build can update the installed app.
+
+### Build on your computer
+
+Needs Node 22+, JDK 21 and the Android SDK (Android Studio installs it).
+
+```bash
+npm ci
+npm run android:sync    # builds mobile/www (bundled fonts, SDK) and copies it into android/
+npx cap open android    # or: npm run android:build
+```
+
+### Publishing on Google Play
+
+Play needs a developer account (one-time US$25), an app bundle
+(`bundleRelease`, which the workflow builds when signing secrets exist),
+target API 36 (already set), a privacy policy at a public URL
+([PRIVACY.md](PRIVACY.md) is a starting point), and a Data safety form. On
+that form, declare user-generated content as collected when the AI check
+sends it to Anthropic. New personal accounts must also run a closed test
+with 12 testers for 14 days before production. The app id
+`io.github.mastersaib.galley` cannot change after the first upload.
+
+### iOS next
+
+Capacitor keeps the web layer and most plugins shared. iOS needs a Mac with
+Xcode 26 (or a macOS CI runner) and an Apple Developer account (US$99 a
+year). Two pieces are native and must be written for iOS: the key store,
+which uses the Keychain, and the text-selection entry, which on iOS is an
+Action Extension.
+
 ## Tests
 
 ```bash
 node tests/examples/proofreader-engine.test.js
 node tests/examples/proofreader-platform.test.js
+node tests/examples/proofreader-mobile.test.js
 ```
 
 They are part of `node tests/run-all.js`.

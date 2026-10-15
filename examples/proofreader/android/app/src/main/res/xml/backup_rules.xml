@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 11 and older. The API key is encrypted with a Keystore key that
+     never leaves this device, so its ciphertext is useless in a backup. -->
+<full-backup-content>
+    <exclude domain="sharedpref" path="galley_secure.xml" />
+</full-backup-content>

@@ -47,6 +47,7 @@
   let currentTab = 'proof';
   function showTab(name) {
     currentTab = name;
+    document.body.dataset.tab = name;
     for (const tab of document.querySelectorAll('[role="tab"]')) {
       const on = tab.dataset.tab === name;
       tab.setAttribute('aria-selected', String(on));
@@ -245,6 +246,7 @@
   function roleNote() {
     const s = state.store;
     if (!s) return '';
+    if (s.kind === 'local' && window.GalleyNative) return 'Saved on this phone. Export or share a document to move it elsewhere.';
     if (s.kind === 'local') return 'Saved in this browser only. Open the hosted page on claude.ai to sync across devices and work with a team.';
     if (!s.me.canWrite) return 'View only. Ask the owner for Contributor access to edit and save.';
     if (s.me.canAdmin) return 'You can edit, restore versions and delete documents, and you can see everyone\'s activity.';
@@ -402,7 +404,8 @@
     $('#sheet-notice').textContent = profile.notice || '';
     $('#sheet-table').replaceChildren(...Engine.describeProfile(profile).map(([k, v]) => el('tr', {}, [el('th', { scope: 'row', text: k }), el('td', { text: v })])));
     const ai = state.ai ? (state.ai.kind === 'claude' ? 'The AI check runs on your own Claude account. Each check asks for your permission the first time.' : 'The AI check runs through this computer\'s server, which holds the API key.') : 'The AI check is off here: open the hosted page on claude.ai, or run the local server with an Anthropic API key.';
-    $('#sheet-ai').textContent = ai;
+    $('#sheet-ai').textContent = window.GalleyNative ? window.GalleyNative.describeAi() : ai;
+    $('#sheet-ai-settings').hidden = !window.GalleyNative;
   }
 
   // ---------------------------------------------------------------- export
@@ -412,6 +415,7 @@
   }
 
   async function saveFile(filename, data, mime) {
+    if (window.GalleyNative) return window.GalleyNative.saveFile(filename, data, mime);
     if (hosted) {
       const downloads = await window.claude.use('downloads').catch(() => null);
       if (!downloads) throw new Error('Downloads are not available in this view.');
@@ -525,6 +529,9 @@
   // ------------------------------------------------------------------ boot
 
   window.GalleyPanels = {
+    showTab,
+    currentTab: () => currentTab,
+    renderSheet,
     onCheck() {
       if (currentTab === 'sheet') renderSheet();
     },
@@ -545,6 +552,7 @@
   bindExport();
   bindTheme();
   $('#ai-summary').addEventListener('click', explainPatterns);
+  $('#sheet-ai-settings').addEventListener('click', () => window.GalleyNative && window.GalleyNative.openAiSettings());
   window.addEventListener('resize', () => {
     if (currentTab === 'dashboard') renderDashboard();
   });

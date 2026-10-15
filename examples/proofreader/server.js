@@ -21,7 +21,7 @@ const AI = require('./public/lib/ai');
 const Engine = require('./public/lib/engine');
 
 const PUBLIC_DIR = path.join(__dirname, 'public');
-const MODEL = process.env.GALLEY_MODEL || 'claude-opus-5-5';
+const MODEL = process.env.GALLEY_MODEL || AI.DEFAULT_MODEL;
 const MAX_BODY = 512 * 1024;
 const MAX_CHUNK = AI.MAX_CHUNK * 2;
 
@@ -88,24 +88,15 @@ function sanitizeFindings(raw) {
  * Streams so long manuscripts never hit an HTTP timeout.
  */
 async function askClaude(client, prompt, schema) {
-  const stream = client.beta.messages.stream({
-    model: MODEL,
-    max_tokens: 64000,
-    betas: ['server-side-fallback-2026-07-01'],
-    fallbacks: 'default',
-    output_config: { effort: 'medium', format: { type: 'json_schema', schema } },
-    system: prompt.system,
-    messages: [{ role: 'user', content: prompt.user }]
-  });
+  const stream = client.beta.messages.stream(AI.buildRequest(prompt, schema, MODEL));
   const message = await stream.finalMessage();
-  if (message.stop_reason === 'refusal') {
-    throw new HttpError(422, 'Claude declined to review this passage.');
+  try {
+    return AI.readMessage(message);
+  } catch (err) {
+    if (err.code === 'refused') throw new HttpError(422, err.message);
+    if (err.code === 'too_long') throw new HttpError(413, err.message);
+    throw err;
   }
-  if (message.stop_reason === 'max_tokens') {
-    throw new HttpError(413, 'Too many findings for one request. Check a shorter section.');
-  }
-  const text = message.content.filter(b => b.type === 'text').map(b => b.text).join('');
-  return AI.parseJson(text);
 }
 
 /**

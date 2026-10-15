@@ -1,0 +1,17 @@
+{
+  "appId": "io.github.mastersaib.galley",
+  "appName": "Galley",
+  "webDir": "mobile/www",
+  "android": {
+    "allowMixedContent": false,
+    "captureInput": false,
+    "webContentsDebuggingEnabled": false
+  },
+  "plugins": {
+    "SystemBars": {
+      "insetsHandling": "css",
+      "style": "DEFAULT",
+      "initialViewportFitValueHint": "cover"
+    }
+  }
+}

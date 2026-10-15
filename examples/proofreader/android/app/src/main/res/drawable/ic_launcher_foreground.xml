@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Galley mark: a pilcrow, the proofreader's paragraph sign. Drawn inside
+     the 66dp safe zone of the 108dp adaptive icon canvas. Also used as the
+     monochrome (themed) icon and the splash icon. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M51,30 L71,30 L71,36 L67,36 L67,78 L61,78 L61,36 L57,36 L57,78 L51,78 L51,57 A13.5,13.5 0 0,1 51,30 Z" />
+</vector>

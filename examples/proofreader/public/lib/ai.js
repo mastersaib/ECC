@@ -283,8 +283,45 @@
     return out;
   }
 
+  const DEFAULT_MODEL = 'claude-opus-5-5';
+
+  /**
+   * The Messages API request used everywhere Galley calls Claude directly
+   * (the local server and the mobile app): streaming, JSON-schema output,
+   * and server-side refusal fallback.
+   */
+  function buildRequest(prompt, schema, model) {
+    return {
+      model: model || DEFAULT_MODEL,
+      max_tokens: 64000,
+      betas: ['server-side-fallback-2026-07-01'],
+      fallbacks: 'default',
+      output_config: { effort: 'medium', format: { type: 'json_schema', schema } },
+      system: prompt.system,
+      messages: [{ role: 'user', content: prompt.user }]
+    };
+  }
+
+  /**
+   * Read a finished message. Throws an Error with .code 'refused' or
+   * 'too_long' for the two stop reasons callers must not parse.
+   */
+  function readMessage(message) {
+    if (message.stop_reason === 'refusal') {
+      throw Object.assign(new Error('Claude declined to review this passage.'), { code: 'refused' });
+    }
+    if (message.stop_reason === 'max_tokens') {
+      throw Object.assign(new Error('Too many findings for one request. Check a shorter section.'), { code: 'too_long' });
+    }
+    const text = message.content.filter(b => b.type === 'text').map(b => b.text).join('');
+    return parseJson(text);
+  }
+
   return {
     CATEGORIES,
+    DEFAULT_MODEL,
+    buildRequest,
+    readMessage,
     ISSUES_SCHEMA,
     SUMMARY_SCHEMA,
     MAX_CHUNK,

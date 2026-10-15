@@ -166,6 +166,7 @@
     editor.setIssues(visible, state.activeId);
     renderChips();
     renderCards(visible);
+    renderFindingBar(visible);
     renderStats();
     $('#profile-notice').hidden = !state.result.profile.notice;
     $('#profile-notice').textContent = state.result.profile.notice || '';
@@ -314,6 +315,34 @@
     const issue = findIssue(id);
     if (issue && opts && opts.select) editor.select(issue, true);
     else if (issue) editor.reveal(issue);
+    renderFindingBar(visibleIssues());
+  }
+
+  // Phones: the findings list sits below the editor, so a docked bar shows the
+  // current finding with its actions and steps through the rest.
+  const compact = window.matchMedia ? window.matchMedia('(max-width: 900px)') : { matches: false };
+
+  function renderFindingBar(visible) {
+    const bar = $('#finding-bar');
+    const show = compact.matches && visible.length > 0;
+    bar.hidden = !show;
+    document.body.classList.toggle('has-finding-bar', show);
+    if (!show) return;
+    let index = visible.findIndex(i => i.id === state.activeId);
+    if (index < 0) {
+      index = 0;
+      state.activeId = visible[0].id;
+      editor.setActive(state.activeId);
+    }
+    const issue = visible[index];
+    const canFix = issue.replacement !== null && issue.replacement !== undefined && (!state.store || state.store.me.canWrite);
+    bar.className = `finding-bar cat-${issue.category}`;
+    $('#fb-meta').textContent = `${index + 1} of ${visible.length} \u00b7 ${Engine.CATEGORIES[issue.category] || issue.category}${issue.source === 'ai' ? ' \u00b7 AI' : ''}`;
+    $('#fb-msg').textContent = issue.message;
+    $('#fb-change').replaceChildren(changeLine(issue));
+    $('#fb-accept').disabled = !canFix;
+    $('#fb-accept').dataset.id = issue.id;
+    $('#fb-stet').dataset.id = issue.id;
   }
 
   function step(delta) {
@@ -536,6 +565,7 @@
   // ------------------------------------------------------------------ AI
 
   async function detectAi() {
+    if (window.GalleyNative) return window.GalleyNative.aiBackend();
     const claude = window.claude;
     if (claude && typeof claude.use === 'function') {
       const sample = await claude.use('sample').catch(() => null);
@@ -647,6 +677,12 @@
   }
 
   function syncControls() {
+    const dialect = Engine.DIALECTS.find(d => d.id === state.settings.dialect);
+    const guide = Engine.STYLE_GUIDES.find(g => g.id === state.settings.style);
+    $('#settings-summary').textContent = [
+      dialect ? dialect.name : '', guide ? guide.short : '',
+      state.settings.mode === 'formal' ? 'Formal' : 'Creative', state.settings.poetry ? 'Poetry' : ''
+    ].filter(Boolean).join(' \u00b7 ');
     $('#dialect').value = state.settings.dialect;
     $('#style').value = state.settings.style;
     $('#poetry').checked = Boolean(state.settings.poetry);
@@ -690,7 +726,17 @@
       state.dirty = true;
       scheduleSave();
     });
-    $('#ai-check').addEventListener('click', runAiCheck);
+    $('#ai-check').addEventListener('click', () => (window.GalleyNative && !state.ai ? window.GalleyNative.openAiSettings() : runAiCheck()));
+    $('#settings-toggle').addEventListener('click', () => {
+      const open = $('#settings-toggle').getAttribute('aria-expanded') !== 'true';
+      $('#settings-toggle').setAttribute('aria-expanded', String(open));
+      document.querySelector('.controls').classList.toggle('open', open);
+    });
+    $('#fb-prev').addEventListener('click', () => step(-1));
+    $('#fb-next').addEventListener('click', () => step(1));
+    $('#fb-accept').addEventListener('click', event => accept(event.currentTarget.dataset.id));
+    $('#fb-stet').addEventListener('click', event => stet(event.currentTarget.dataset.id));
+    if (compact.addEventListener) compact.addEventListener('change', () => renderFindingBar(visibleIssues()));
     $('#prev-issue').addEventListener('click', () => step(-1));
     $('#next-issue').addEventListener('click', () => step(1));
     $('#undo-fix').addEventListener('click', undoFix);
@@ -729,9 +775,15 @@
     const hosted = window.claude && typeof window.claude.use === 'function';
     if (hosted) setStatus('Connecting to the shared workspace…', 'busy');
     const [store, ai] = await Promise.all([Store.open(), detectAi()]);
-    state.ai = ai;
-    document.body.dataset.ai = ai ? ai.kind : 'none';
+    setAi(ai);
     await useStore(store);
+    window.dispatchEvent(new CustomEvent('galley:ready'));
+  }
+
+  /** Switch the AI transport; the mobile app offers the button even before a key is set. */
+  function setAi(ai) {
+    state.ai = ai;
+    document.body.dataset.ai = ai ? ai.kind : (window.GalleyNative ? 'device' : 'none');
   }
 
   window.GalleyApp = {
@@ -749,7 +801,10 @@
     pickDocSettings,
     sampleText: () => SAMPLE,
     sampleTitle: SAMPLE_TITLE,
-    activate
+    activate,
+    setAi,
+    step,
+    runAiCheck
   };
 
   boot();

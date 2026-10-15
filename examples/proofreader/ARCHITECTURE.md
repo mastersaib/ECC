@@ -220,6 +220,66 @@ Delete is restricted to Editors and Owners in the interface. The store's
 rules cannot tell a delete from an edit, so a determined Contributor could
 still delete through the API. Versions keep the text either way.
 
+## Mobile app
+
+The Android app (`android/`, Capacitor 8) runs the same `public/` code in a
+WebView. `scripts/build-mobile.js` produces `mobile/www`, the bundle that
+ships in the app. It has bundled OFL fonts instead of Google Fonts, no
+service worker or manifest, and `vendor/anthropic-sdk.js`, the official
+TypeScript SDK bundled for the browser by esbuild. `npx cap sync` copies it
+into the Android project.
+
+`public/js/native.js` is the bridge. It runs only when
+`window.Capacitor.isNativePlatform()` is true and reaches plugins through
+`window.Capacitor.Plugins`, which the native shell injects (no `@capacitor/core`
+JavaScript, no bundler):
+
+| Plugin | Source | Used for |
+|---|---|---|
+| `IncomingText` | `IncomingTextPlugin.java` | Text from the selection menu and Share; returning corrected text |
+| `SecureKey` | `SecureKeyPlugin.java` | The Anthropic API key, AES-256-GCM under a non-exportable Android Keystore key |
+| `Filesystem`, `Share` | `@capacitor/filesystem`, `@capacitor/share` | Exports: write to the app cache, then the system share sheet |
+| `App` | `@capacitor/app` | Back button (predictive back on Android 16), saving on pause |
+| `SystemBars` | Capacitor core | Edge-to-edge insets and keyboard resizing |
+
+### Selected text round trip
+
+```mermaid
+sequenceDiagram
+  participant Other as Other app
+  participant PTA as ProcessTextActivity
+  participant Page as Galley page
+  Other->>PTA: PROCESS_TEXT (selection, readOnly flag), started for result
+  PTA->>Page: retained "incomingText" event
+  Page->>Page: open as a new document, show Replace selection
+  Page->>PTA: IncomingText.finish({ text })
+  PTA-->>Other: RESULT_OK + EXTRA_PROCESS_TEXT
+```
+
+`ProcessTextActivity` is a second `BridgeActivity` with the standard launch
+mode. It runs in the calling app's task, because the `singleTask`
+`MainActivity` could not return a result. Share (`ACTION_SEND`) goes to
+`MainActivity`, which forwards text arriving while it is open through
+`onNewIntent`.
+
+### On-device AI
+
+With a key saved, `native.js` gives the app an AI backend that calls
+`client.beta.messages.stream(GalleyAI.buildRequest(...))` with
+`dangerouslyAllowBrowser: true`. That is the same request the local server
+sends, built by the same function. Requests go from the phone straight to
+`api.anthropic.com`; there is no Galley server in between. SDK errors map to
+the app's error codes: rejected key, rate limit, offline, refusal, stopped.
+
+### Builds and signing
+
+`.github/workflows/galley-android.yml` runs the tests, builds `mobile/www`,
+syncs and builds with Gradle, runs Android lint, fails if any native
+library appears in the APK (a 16 KB page-size guard), and uploads the APK
+(and AAB). With the `GALLEY_KEYSTORE_*` secrets it signs a release build;
+`app/build.gradle` reads signing only from the environment. `versionCode`
+is the run number, so every build installs over the last.
+
 ## Not built, and what each would need
 
 These requests need decisions or infrastructure outside this code, or they

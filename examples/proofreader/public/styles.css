@@ -649,6 +649,78 @@ table.data td.examples { font-family: var(--font-text); color: var(--ink-2); }
 .protected { margin: 0; padding-left: 20px; display: grid; gap: 4px; max-width: 65ch; }
 .sheet-paper p { margin: 0; max-width: 65ch; }
 
+/* ------------------------------------------------- phone: settings + bar */
+
+.settings-toggle { display: none; }
+.settings-fields { display: contents; }
+body[data-ai="none"] .ai-only { display: none; }
+
+.finding-bar {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 40;
+  display: grid;
+  gap: 8px;
+  background: var(--paper);
+  border-top: 3px solid var(--c, var(--accent));
+  box-shadow: 0 -6px 24px rgba(20, 30, 45, 0.14);
+  padding-block: 10px calc(10px + env(safe-area-inset-bottom, 0px));
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+body:not([data-tab="proof"]) .finding-bar { display: none !important; }
+.fb-text { display: grid; gap: 2px; min-width: 0; }
+.fb-meta { margin: 0; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-2); }
+.fb-msg { margin: 0; font-weight: 600; line-height: 1.35; }
+.fb-text .change { font-size: 0.9375rem; max-height: 3.2em; overflow: hidden; }
+.fb-actions { display: grid; grid-template-columns: 48px 1fr 1fr 48px; gap: 8px; }
+.fb-actions .btn { min-height: 44px; font-size: 1rem; }
+#fb-prev, #fb-next { font-size: 1.75rem; line-height: 1; border-color: var(--rule-strong); color: var(--ink); }
+body.has-finding-bar[data-tab="proof"] .app { padding-bottom: 190px; }
+body.has-finding-bar[data-tab="proof"] .toast { bottom: calc(180px + env(safe-area-inset-bottom, 0px)); }
+
+/* ------------------------------------------------------------ mobile app */
+
+.native-app #theme-toggle { display: none; }
+.native-app body { -webkit-tap-highlight-color: transparent; }
+
+.return-bar {
+  display: grid;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+}
+.return-bar p { margin: 0; font-weight: 600; }
+.return-bar .btn { min-height: 44px; flex: 1 1 0; }
+
+.sheet-dialog {
+  width: min(520px, calc(100vw - 32px));
+  border: 1px solid var(--rule-strong);
+  border-radius: 10px;
+  padding: 0;
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+}
+.sheet-dialog::backdrop { background: rgba(10, 16, 24, 0.5); }
+.dialog-body { display: grid; gap: 10px; padding: 20px; }
+.dialog-body p { margin: 0; color: var(--ink-2); }
+.dialog-body input {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--rule-strong);
+  border-radius: var(--radius);
+  background: var(--paper);
+  font-family: var(--font-mono);
+  font-size: 1rem;
+}
+.dialog-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.dialog-actions .btn { min-height: 44px; }
+
 /* --------------------------------------------------------- responsive */
 
 @media (max-width: 1100px) {
@@ -665,6 +737,27 @@ table.data td.examples { font-family: var(--font-text); color: var(--ink-2); }
 
 @media (max-width: 640px) {
   :root { --editor-pad-x: 16px; --editor-pad-y: 16px; }
+  .settings-toggle {
+    display: grid;
+    flex: 1 1 100%;
+    text-align: left;
+    gap: 2px;
+    border: 0;
+    background: none;
+    padding: 2px 0;
+    cursor: pointer;
+  }
+  .settings-label { font-size: 0.6875rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--ink-3); }
+  .settings-label::after { content: ' \25BE'; }
+  .controls.open .settings-label::after { content: ' \25B4'; }
+  .settings-summary { font-weight: 600; }
+  .controls:not(.open) .settings-fields { display: none; }
+  .controls.open .settings-fields { display: flex; flex-wrap: wrap; gap: 10px 12px; flex: 1 1 100%; }
+  .controls .grow { display: none; }
+  .ai-controls, .export { flex: 1 1 0; }
+  .ai-controls .btn, .export > .btn { width: 100%; min-height: 44px; }
+  .btn, .chip, .tabs button { min-height: 40px; }
+  .tabs button { padding: 10px 12px; }
   .hist-grid { grid-template-columns: minmax(0, 1fr); }
   .controls { padding: 10px; gap: 10px 12px; }
   .field { flex: 1 1 140px; }

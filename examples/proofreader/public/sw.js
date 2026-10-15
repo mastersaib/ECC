@@ -6,7 +6,7 @@
  */
 'use strict';
 
-const CACHE = 'galley-v1';
+const CACHE = 'galley-v2';
 const SHELL = [
   './',
   'index.html',
@@ -25,6 +25,7 @@ const SHELL = [
   'lib/sync.js',
   'js/store.js',
   'js/editor.js',
+  'js/native.js',
   'js/app.js',
   'js/panels.js',
   'js/offline.js'
