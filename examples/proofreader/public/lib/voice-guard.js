@@ -12,8 +12,9 @@
  *   - change at most four words in all, counting each word taken out and
  *     each word put in ("they was" -> "they were" is two; "me and him" ->
  *     "he and I" is four; "18:30" -> "6:30 p.m." is four),
- *   - never delete a sentence.
- * Punctuation, capitalization and spacing changes are always allowed.
+ *   - never delete a sentence, a line break or a paragraph break.
+ * Punctuation, capitalization and spacing changes that keep the same words
+ * are always allowed. "p.m." and "per cent" count as one word each.
  */
 (function (root, factory) {
   'use strict';
@@ -31,7 +32,14 @@
   const WORD_CHAR = /[\p{L}\p{N}'’-]/u;
 
   function words(text) {
-    return (String(text).match(WORD) || []).map(w => w.toLowerCase().replace(/’/g, "'"));
+    const t = String(text)
+      .replace(/\b(?:\p{L}\.){2,}/gu, m => m.replace(/\./g, '')) // "p.m.", "U.S." are one word
+      .replace(/\bper cent\b/gi, 'percent');
+    return (t.match(WORD) || []).map(w => w.toLowerCase().replace(/’/g, "'"));
+  }
+
+  function lineBreaks(text) {
+    return (String(text).match(/\n/g) || []).length;
   }
 
   /** Letters and digits only, lowercased: what is left when punctuation, case and spacing are ignored. */
@@ -72,7 +80,7 @@
     while (s > 0) {
       const ch = text[s - 1];
       if (ch === '\n') break;
-      if (/\s/.test(ch) && /[.!?]["”’)\]]*$/.test(text.slice(Math.max(0, s - 6), s - 1))) break;
+      if (/\s/.test(ch) && /[.!?…]["”’)\]]*$/.test(text.slice(Math.max(0, s - 6), s - 1))) break;
       s--;
     }
     return s;
@@ -81,8 +89,8 @@
   /** End of the sentence containing pos, after its closing punctuation and quotes. */
   function sentenceEnd(text, pos) {
     let e = pos;
-    while (e < text.length && text[e] !== '\n' && !/[.!?]/.test(text[e])) e++;
-    while (e < text.length && /[.!?"”’)\]]/.test(text[e])) e++;
+    while (e < text.length && text[e] !== '\n' && !/[.!?…]/.test(text[e])) e++;
+    while (e < text.length && /[.!?…"”’)\]]/.test(text[e])) e++;
     return e;
   }
 
@@ -94,10 +102,12 @@
    */
   function deletesSentence(text, start, end, replacement) {
     const kept = letters(replacement);
+    const editWords = words(text.slice(start, end)).length;
+    const replWords = words(replacement).length;
     const from = sentenceStart(text, start);
     const to = sentenceEnd(text, Math.max(start, end - 1));
     const region = text.slice(from, to);
-    for (const m of region.matchAll(/[^.!?\n]*[.!?]+["”’)\]]*|[^.!?\n]+/g)) {
+    for (const m of region.matchAll(/[^.!?…\n]*[.!?…]+["”’)\]]*|[^.!?…\n]+/g)) {
       const a = from + m.index;
       const b = a + m[0].length;
       const own = words(m[0]);
@@ -105,7 +115,13 @@
       const outside = (a < start ? words(text.slice(a, Math.min(b, start))) : []).length +
         (b > end ? words(text.slice(Math.max(a, end), b)) : []).length;
       if (outside > 0) continue;
-      if (!kept.includes(letters(m[0]))) return true;
+      if (kept.includes(letters(m[0]))) continue;
+      // A one-word sentence whose word is corrected in place ("Realy?" -> "Really?", or the
+      // "goverment." that follows "U.S."): the sentence is still there.
+      if (own.length === 1 && editWords === 1 && replWords >= 1) continue;
+      // A longer sentence that keeps its words in a new order (a dateline reformatted).
+      if (own.length > 1 && editWords <= replWords && measure(m[0], replacement).removed < own.length) continue;
+      return true;
     }
     return false;
   }
@@ -117,8 +133,12 @@
   function review(text, start, end, replacement) {
     if (replacement === null || replacement === undefined) return { ok: true };
     const original = text.slice(start, end);
-    // Punctuation, capitalization and spacing only: the author's words are untouched.
-    if (letters(original) === letters(replacement)) return { ok: true };
+    if (lineBreaks(replacement) < lineBreaks(original)) {
+      return { ok: false, reason: 'It would remove a line or paragraph break.' };
+    }
+    // Punctuation, capitalization and spacing only: the same words, untouched.
+    const bare = t => words(t).map(w => w.replace(/['-]/g, '')).join(' ');
+    if (letters(original) === letters(replacement) && bare(original) === bare(replacement)) return { ok: true };
     if (deletesSentence(text, start, end, replacement)) {
       return { ok: false, reason: 'It would delete a whole sentence.' };
     }
@@ -164,5 +184,5 @@
     return { trimStart: p, trimEnd: s, replacement: replacement.slice(p, replacement.length - s) };
   }
 
-  return { LIMITS, words, letters, measure, review, protect, narrow };
+  return { LIMITS, words, letters, measure, review, protect, narrow, sentenceStart };
 }));

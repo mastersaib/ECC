@@ -97,14 +97,21 @@
       reveal(issue);
     }
 
+    // "Undo fix" restores a whole-text snapshot, so each snapshot records the
+    // text the fix produced and is only valid while the text is still exactly
+    // that. Typing, a teammate's merged edit or opening another document ends
+    // it, so an undo can never overwrite newer words or another document.
     function replaceRange(start, end, replacement) {
-      undoStack.push({ text: textarea.value, caret: textarea.selectionStart });
+      const entry = { text: textarea.value, caret: textarea.selectionStart };
+      undoStack.push(entry);
       if (undoStack.length > 100) undoStack.shift();
       textarea.setRangeText(replacement, start, end, 'end');
+      entry.after = textarea.value;
     }
 
     function setText(text, keepUndo) {
-      if (keepUndo) undoStack.push({ text: textarea.value, caret: textarea.selectionStart });
+      if (keepUndo) undoStack.push({ text: textarea.value, caret: textarea.selectionStart, after: text });
+      else undoStack.length = 0;
       const caret = textarea.selectionStart;
       const scroll = textarea.scrollTop;
       textarea.value = text;
@@ -117,9 +124,17 @@
       textarea.scrollTop = scroll;
     }
 
+    function canUndo() {
+      const last = undoStack[undoStack.length - 1];
+      return Boolean(last) && last.after === textarea.value;
+    }
+
     function undo() {
+      if (!canUndo()) {
+        undoStack.length = 0;
+        return false;
+      }
       const last = undoStack.pop();
-      if (!last) return false;
       textarea.value = last.text;
       try {
         textarea.setSelectionRange(last.caret, last.caret);
@@ -168,7 +183,7 @@
       replaceRange,
       setText,
       undo,
-      canUndo: () => undoStack.length > 0,
+      canUndo,
       render,
       setLang(lang) {
         textarea.setAttribute('lang', lang);

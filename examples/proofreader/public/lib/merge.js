@@ -18,6 +18,11 @@
 
   const MAX_CELLS = 16e6;
 
+  // Blank lines separate paragraphs and are all alike, so they never anchor
+  // the alignment: matched blanks could pair up the wrong paragraphs and make
+  // a paragraph nobody changed look replaced.
+  const anchors = (x, y) => x === y && x.trim() !== '';
+
   /**
    * Longest-common-subsequence map from a's indices to b's (-1 = unmatched).
    * Common prefix and suffix are trimmed first, so local edits stay cheap.
@@ -44,7 +49,7 @@
     const dp = new Uint32Array((n + 1) * width);
     for (let i = n - 1; i >= 0; i--) {
       for (let j = m - 1; j >= 0; j--) {
-        dp[i * width + j] = a[pre + i] === b[pre + j]
+        dp[i * width + j] = anchors(a[pre + i], b[pre + j])
           ? dp[(i + 1) * width + j + 1] + 1
           : Math.max(dp[(i + 1) * width + j], dp[i * width + j + 1]);
       }
@@ -52,7 +57,7 @@
     let i = 0;
     let j = 0;
     while (i < n && j < m) {
-      if (a[pre + i] === b[pre + j]) {
+      if (anchors(a[pre + i], b[pre + j])) {
         map[pre + i] = pre + j;
         i++;
         j++;
@@ -113,7 +118,25 @@
       ti = toTheirs[k] + 1;
     }
     flush(B.length, M.length, T.length);
+    // Last line of defence: a paragraph both sides still have must survive.
+    // If the alignment ever loses one, keep the local text whole and hand the
+    // other side's text back as a conflict, which the caller saves as a version.
+    if (dropsCommonLine(M, T, out)) return { text: mine, conflicts: Math.max(1, conflicts), theirsConflicts: [theirs] };
     return { text: out.join('\n'), conflicts, theirsConflicts };
+  }
+
+  function countLines(lines) {
+    const counts = new Map();
+    for (const line of lines) if (line.trim()) counts.set(line, (counts.get(line) || 0) + 1);
+    return counts;
+  }
+
+  function dropsCommonLine(mine, theirs, out) {
+    const m = countLines(mine);
+    const t = countLines(theirs);
+    const o = countLines(out);
+    for (const [line, n] of m) if (Math.min(n, t.get(line) || 0) > (o.get(line) || 0)) return true;
+    return false;
   }
 
   return { merge3, lcsMap };

@@ -286,8 +286,10 @@
 
   let bulkArmed = null;
   function renderBulk(visible) {
-    // Rule fixes only: AI findings are judgment calls, so each is accepted on its own.
-    const fixable = visible.filter(i => i.replacement !== null && i.replacement !== undefined && i.source !== 'ai');
+    // Rule fixes only. AI findings, notes about the narrator's voice (info) and fixes
+    // the rule marks for review (a tense shift) are judgment calls, accepted one by one.
+    const fixable = visible.filter(i => i.replacement !== null && i.replacement !== undefined &&
+      i.source !== 'ai' && i.severity !== 'info' && i.bulk !== false);
     const box = $('#bulk');
     if (fixable.length < 2 || (state.store && !state.store.me.canWrite)) {
       box.replaceChildren();
@@ -720,7 +722,7 @@
         const parsed = await state.ai.run(prompt, abort.signal, {
           kind: 'proofread', text: chunk.text, options: pickDocSettings(), flow: state.settings.flow, findings
         });
-        const located = AI.locateIssues(text, chunk, parsed);
+        const located = AI.locateIssues(text, chunk, parsed, { flow: state.settings.flow });
         found.push(...located.issues);
         dropped += located.dropped;
       }

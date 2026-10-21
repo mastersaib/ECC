@@ -98,8 +98,15 @@ suggestion, so it is shown but cannot be accepted.
 It is applied at every layer: the engine protects every rule issue as it is
 reported, `locateIssues` and `relocateIssues` protect every AI issue,
 `applyFix` (and so `applyFixes`) refuses any edit `review` rejects, and the
-page's Accept checks again before writing. **Accept all** applies rule fixes
-only. The limits were set from the rule engine's own largest fixes
+page's Accept checks again before writing. `applyFixes` also keeps a batch
+to one removed word per sentence. **Accept all** applies rule fixes only,
+and not voice notes (severity info) or fixes a rule marks `bulk: false`
+(tense shifts).
+
+A fix that removes a line or paragraph break is refused, and the
+punctuation-only shortcut requires the same words, so *Go. He went.* cannot
+become *Gohewent*. `…` ends a sentence like `.`. *p.m.* and *per cent* count
+as one word. The limits were set from the rule engine's own largest fixes
 (*18:30* to *6:30 p.m.* changes four words); no rule fix is downgraded.
 
 `narrow(original, replacement)` trims an AI edit to whole words that differ,
@@ -115,7 +122,16 @@ paragraph boundaries. Rule findings inside the chunk go along so Claude does
 not repeat them. Claude replies with quotes, not offsets. `ai.locateIssues`
 finds each quote in the text, using the quoted sentence to tell repeats apart,
 and drops any it cannot find. After edits, `relocateIssues` finds each AI
-finding again or drops it. Both run the voice guard (above). Flow
+finding again or drops it. Both run the voice guard (above).
+
+Anchoring never guesses. The quote must occur exactly once, as whole words,
+in its context sentence, and the sentence must be in the text; curly and
+straight quotes count as equal and spacing may differ. If the sentence has
+since been edited, the words on either side of the quote (three, then two)
+must still identify one place. Otherwise the finding is dropped and counted
+in "could not be matched". A delete of a doubled word removes one copy and
+takes one neighbouring space; a delete that carries new words, a flow
+finding or an unrecognized category is advice only. Flow
 suggestions and notes are always suggestions: their proposed wording is
 kept in `suggestion`, never in `replacement`.
 
@@ -225,8 +241,11 @@ sequenceDiagram
 
 - Each client remembers the text of its last 25 revisions, so it can merge
   against the exact base the other writer started from.
-- `merge3` aligns paragraphs with a longest-common-subsequence diff. Changes
-  to different paragraphs combine. When both sides changed the same paragraph
+- `merge3` aligns paragraphs with a longest-common-subsequence diff in which
+  blank separator lines never anchor the alignment (they would pair up the
+  wrong paragraphs). Changes to different paragraphs combine. As a last
+  resort, a merge that would lose a paragraph both sides still have keeps
+  the local text whole and saves the other side as a version. When both sides changed the same paragraph
   differently, the local wording stays and the other side's full text is saved
   as a version with the reason "Teammate's wording", so nothing is lost.
 - Edits made offline are mirrored to `localStorage`. On reconnect they are

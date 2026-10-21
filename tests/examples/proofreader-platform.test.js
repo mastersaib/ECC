@@ -7,8 +7,10 @@
  */
 
 const assert = require('assert');
+const fs = require('fs');
 const http = require('http');
 const path = require('path');
+const vm = require('vm');
 
 const ROOT = path.join(__dirname, '..', '..', 'examples', 'proofreader');
 const LIB = path.join(ROOT, 'public', 'lib');
@@ -152,7 +154,6 @@ async function runTests() {
     assert.strictEqual(flow.suggestion, 'the sky looked grey');
     assert.strictEqual(spelling.text, 'grey');
     assert.strictEqual(spelling.replacement, 'gray', 'a one-word fix still applies');
-    const Engine = require(path.join(ROOT, 'public', 'lib', 'engine'));
     const { text: after, applied } = Engine.applyFixes(text, issues.concat(Object.assign({}, del, { replacement: '' })));
     assert.strictEqual(applied, 1);
     assert.strictEqual(after, text.replace('was grey', 'was gray'), 'applyFixes refuses a sentence deletion even if forced');
@@ -167,6 +168,90 @@ async function runTests() {
     assert.strictEqual(moved[0].replacement, null);
     assert.strictEqual(moved[0].suggestion, 'They were here, Alpha.');
     assert.strictEqual(moved[0].start, 7);
+  });
+
+  const aiFix = (text, raw, options) => {
+    const { issues } = AI.locateIssues(text, { text, offset: 0 }, {
+      issues: [Object.assign({ context: text, category: 'grammar', severity: 'error', message: 'm', explanation: 'e' }, raw)]
+    }, options);
+    return issues[0] || null;
+  };
+  await t('AI quotes anchor only to whole words, once in their sentence', () => {
+    // Curly text, straight context: still the right word, not the "was" in "wasn’t"
+    let text = 'She wasn’t sure. The senator’s aides was late.';
+    let issue = aiFix(text, { quote: 'was', context: "The senator's aides was late.", action: 'replace', replacement: 'were' });
+    assert.strictEqual(Engine.applyFix(text, issue), 'She wasn’t sure. The senator’s aides were late.');
+    // Ambiguous inside its sentence: dropped rather than guessed
+    text = 'She said it was fine, but they was not convinced.';
+    assert.strictEqual(aiFix(text, { quote: 'was', action: 'replace', replacement: 'were' }), null);
+    issue = aiFix(text, { quote: 'they was', action: 'replace', replacement: 'they were' });
+    assert.strictEqual(Engine.applyFix(text, issue), 'She said it was fine, but they were not convinced.');
+    // Never inside another word
+    text = 'At dawn they wasted no time. By noon they was gone.';
+    issue = aiFix(text, { quote: 'they was', context: 'By noon they was gone.', action: 'replace', replacement: 'they were' });
+    assert.strictEqual(Engine.applyFix(text, issue), 'At dawn they wasted no time. By noon they were gone.');
+  });
+
+  await t('a stale AI finding is found again from its neighbours, or dropped', () => {
+    const text = 'It was late. They was at the the door.';
+    const { issues } = AI.locateIssues(text, { text, offset: 0 }, {
+      issues: [{ quote: 'They was', context: 'They was at the the door.', action: 'replace', replacement: 'They were', category: 'grammar', severity: 'error', message: 'm', explanation: 'e' }]
+    });
+    const afterRuleFix = 'It was late. They was at the door.';
+    const moved = AI.relocateIssues(afterRuleFix, issues);
+    assert.strictEqual(Engine.applyFix(afterRuleFix, moved[0]), 'It was late. They were at the door.');
+    assert.deepStrictEqual(AI.relocateIssues('It were late. They were at the door.', issues), []);
+  });
+
+  await t('AI deletes remove one copy of a doubled word and leave no double space', () => {
+    let text = 'Then they saw the the dog.';
+    assert.strictEqual(Engine.applyFix(text, aiFix(text, { quote: 'the the', action: 'delete', replacement: '' })), 'Then they saw the dog.');
+    text = 'It is what it is, and there is is no doubt.';
+    assert.strictEqual(Engine.applyFix(text, aiFix(text, { quote: 'is is', action: 'replace', replacement: 'is' })), 'It is what it is, and there is no doubt.');
+    text = 'He went home very quickly.';
+    assert.strictEqual(Engine.applyFix(text, aiFix(text, { quote: 'very', action: 'delete', replacement: '' })), 'He went home quickly.');
+    // A delete that carries new words is advice, not an edit
+    const odd = aiFix('They was here.', { quote: 'was', action: 'delete', replacement: 'were' });
+    assert.strictEqual(odd.replacement, null);
+    assert.strictEqual(odd.suggestion, 'were');
+  });
+
+  await t('mis-cased or unknown AI categories cannot turn advice into an edit; flow off drops flow', () => {
+    const text = 'He went to the shop and bought he some bread.';
+    assert.strictEqual(aiFix(text, { quote: 'bought he some bread', category: 'Flow', action: 'replace', replacement: 'bought some bread' }).replacement, null);
+    assert.strictEqual(aiFix(text, { quote: 'bought he', category: 'Grammar', action: 'replace', replacement: 'bought' }).category, 'grammar');
+    assert.strictEqual(aiFix(text, { quote: 'bought he', category: 'word choice', action: 'replace', replacement: 'bought' }).replacement, null);
+    assert.strictEqual(aiFix('They was here.', { quote: 'They was here', category: 'flow', action: 'note', replacement: 'They were here' }, { flow: false }), null);
+    const prompt = AI.buildProofreadPrompt({ text: 'x', profile: Engine.resolveProfile({}), flow: false }).system;
+    assert.ok(!/\| flow"/.test(prompt), 'the flow-off template does not offer category flow');
+    assert.match(prompt, /"was" -> "were" is two/);
+  });
+
+  await t('Undo fix only undoes the fix, never newer text or another document', () => {
+    const fake = () => {
+      const ta = { value: '', selectionStart: 0, scrollTop: 0, scrollLeft: 0, addEventListener() {},
+        setSelectionRange(a) { this.selectionStart = a; },
+        setRangeText(r, a, b) { this.value = this.value.slice(0, a) + r + this.value.slice(b); } };
+      const box = { scrollTop: 0, scrollLeft: 0, innerHTML: '', querySelectorAll: () => [], querySelector: () => null, style: {} };
+      return { textarea: ta, backdrop: box, highlights: box };
+    };
+    const context = { window: undefined, CSS: { escape: s => s } };
+    vm.runInNewContext(fs.readFileSync(path.join(ROOT, 'public', 'js', 'editor.js'), 'utf8'), context);
+    const parts = fake();
+    const editor = context.GalleyEditor.createEditor(parts);
+    editor.setText('They was home.');
+    editor.replaceRange(5, 8, 'were');
+    assert.ok(editor.canUndo());
+    parts.textarea.value += ' I typed this.';
+    assert.ok(!editor.canUndo(), 'typing ends the fix\'s undo');
+    assert.strictEqual(editor.undo(), false);
+    assert.strictEqual(parts.textarea.value, 'They were home. I typed this.');
+    editor.replaceRange(0, 4, 'We');
+    editor.setText('Another document.');
+    assert.ok(!editor.canUndo(), 'opening another document clears undo');
+    editor.replaceRange(0, 7, 'One');
+    assert.strictEqual(editor.undo(), true);
+    assert.strictEqual(parts.textarea.value, 'Another document.');
   });
 
   await t('relocateIssues follows edits and drops fixed findings', () => {
@@ -220,6 +305,36 @@ async function runTests() {
     assert.strictEqual(r.text, 'A\nB-mine\nC');
     assert.strictEqual(r.conflicts, 1);
     assert.deepStrictEqual(r.theirsConflicts, ['B-theirs']);
+  });
+
+  await t('merge3 never drops a paragraph both sides still have', () => {
+    const base = 'The rain had not stopped since Tuesday.\n\nMrs Okafor stood at the window.\n\nDaniel came in late, soaked to the skin.';
+    const mine = base.replace('skin.', 'skin!');
+    const theirs = 'The rain had not stopped since Tuesday.\n\nA new paragraph from my co-author.\n\nMrs Okafor stood at the window.';
+    const r = Merge.merge3(base, mine, theirs);
+    assert.ok(r.text.includes('Mrs Okafor stood at the window.'));
+    assert.ok(r.text.includes('A new paragraph from my co-author.'));
+    assert.ok(r.text.includes('soaked to the skin!'));
+    let seed = 7;
+    const rnd = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+    const edit = ps => {
+      const out = ps.slice();
+      for (let k = 0; k < 2; k++) {
+        const i = Math.floor(rnd() * (out.length + 1));
+        const op = rnd();
+        if (op < 0.33) out.splice(i, 0, `New ${k}.`);
+        else if (op < 0.66 && out.length > 1) out.splice(Math.min(i, out.length - 1), 1);
+        else out[Math.min(i, out.length - 1)] += ' Edited.';
+      }
+      return out;
+    };
+    for (let n = 0; n < 2000; n++) {
+      const B = Array.from({ length: 4 }, (_, i) => `Paragraph ${i}.`);
+      const Mi = edit(B);
+      const Ti = edit(B);
+      const out = Merge.merge3(B.join('\n\n'), Mi.join('\n\n'), Ti.join('\n\n')).text.split('\n');
+      for (const p of Mi) if (Ti.includes(p)) assert.ok(out.includes(p), `lost "${p}"`);
+    }
   });
 
   await t('merge3 handles inserts and deletes on both sides', () => {

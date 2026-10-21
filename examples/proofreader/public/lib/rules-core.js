@@ -205,9 +205,14 @@
     id: 'repeated-word',
     category: 'grammar',
     run(ctx) {
-      ctx.each(/(^|[^\p{L}\p{N}'’])(\p{L}+)(\s+)(\2)(?![\p{L}\p{N}'’])/gdiu, m => {
+      // Spaces only: "Chapter Seven\n\nSeven men rode in" is a heading and a sentence.
+      ctx.each(/(^|[^\p{L}\p{N}'’])(\p{L}+)([ \t]+)(\2)(?![\p{L}\p{N}'’])/gdiu, m => {
         const word = m[2].toLowerCase();
         if (LEGIT_REPEATS.has(word)) return null;
+        // Three or more in a row is deliberate ("Drip drip drip drip").
+        const before = ctx.text.slice(0, m.indices[2][0]).match(/(\p{L}+)[ \t,]*$/u);
+        const after = ctx.text.slice(m.indices[4][1]).match(/^[ \t,]*(\p{L}+)/u);
+        if ((before && before[1].toLowerCase() === word) || (after && after[1].toLowerCase() === word)) return null;
         const emphatic = EMPHATIC_REPEATS.has(word);
         return {
           start: m.indices[3][0], end: m.indices[4][1], replacement: '',

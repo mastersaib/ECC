@@ -110,8 +110,10 @@ and always suggestions: Galley shows the proposed wording but never applies
 it for you.
 
 **Verb tense.** The rules fix wrong participles (*had went*, *I seen*) and
-tense slips between two verbs of one subject (*She grabbed her coat and
-runs out*), in narration only. Claude also checks the narrative tense of
+suggest a fix for tense slips between two verbs of one subject (*She
+grabbed her coat and runs out*), in narration only. A past event beside a
+present state can be right (*She grew up in Lagos and speaks four
+languages*), so tense shifts are always yours to accept one by one. Claude also checks the narrative tense of
 each passage and fixes only the verb that slips, never dialogue, and leaves
 deliberate shifts (flashbacks, general truths) alone.
 
@@ -122,9 +124,14 @@ deliberate shifts (flashbacks, general truths) alone.
   the same finding for the session; **Undo fix** reverts. Keyboard:
   Alt+Down and Alt+Up step through findings, Alt+Enter accepts,
   Alt+Backspace stets.
-- **Filter** by type with the chips. **Accept all** applies every rule fix
-  in the current filter, after a confirmation click. Claude's findings are
-  accepted one at a time.
+- **Filter** by type with the chips. **Accept all** applies the rule fixes
+  in the current filter, after a confirmation click, and removes at most one
+  word from any sentence. Claude's findings, notes about the narrator's
+  voice and tense-shift suggestions are accepted one at a time.
+- **Undo fix** reverts the last accepted fix while the text is still exactly
+  as the fix left it. Once you type, a teammate's edit arrives or you open
+  another document, there is nothing to undo, so it can never overwrite
+  newer words.
 - **Mark italics** with `*asterisks*`. Exports turn them into real italics.
 - **Dashboard.** Errors and warnings per 1,000 words over time, findings by
   type, and recurring issues with examples. **Explain my patterns** asks

@@ -403,6 +403,43 @@ function runTests() {
     }
   });
 
+  t('the guard treats … as a sentence end and never removes a line break', () => {
+    assert.strictEqual(verdict('She waited. Nothing… Then the door opened.', 'Nothing… ', ''), 'It would delete a whole sentence.');
+    assert.strictEqual(verdict('"Well…" He shrugged and left.', '"Well…" ', ''), 'It would delete a whole sentence.');
+    assert.strictEqual(verdict('line one\nline two', '\n', ' '), 'It would remove a line or paragraph break.');
+    assert.strictEqual(verdict('Go. He went.', 'Go. He went.', 'Gohewent'), 'It would remove 2 of your words.');
+    assert.strictEqual(verdict('Go. He went.', 'Go. He', 'Go, he'), 'ok');
+  });
+
+  t('one-word sentences, datelines, times and per cent can still be fixed', () => {
+    assert.strictEqual(verdict('“Realy?” she asked.', 'Realy', 'Really'), 'ok');
+    assert.strictEqual(verdict('He worked for the U.S. goverment.', 'goverment', 'government'), 'ok');
+    assert.strictEqual(verdict('The meeting is at 3 p.m. tommorow.', 'tommorow', 'tomorrow'), 'ok');
+    assert.strictEqual(verdict('14 October 2026\nDear Anna, I write.', '14 October 2026', 'October 14, 2026'), 'ok');
+    assert.strictEqual(verdict('Dinner was at 19:00 sharp.', '19:00', '7 p.m.'), 'ok');
+    assert.strictEqual(verdict('Inflation rose 5 per cent last year.', ' per cent', '%'), 'ok');
+    for (const [text, options] of [['“Realy?” she asked.', {}], ['14 October 2026\nDear Anna, I am writing to you from Paris.', {}],
+      ['Dinner was at 19:00 and the film began at 21:00.', { style: 'house' }], ['Inflation rose 5 per cent last year.', { dialect: 'en-GB', style: 'ap' }]]) {
+      for (const issue of check(text, options)) assert.ok(!issue.guard, `${issue.ruleId} on ${JSON.stringify(text)}: ${issue.guard}`);
+    }
+  });
+
+  t('repeated words: not across line breaks, not in deliberate runs', () => {
+    for (const text of ['Chapter Seven\n\nSeven men rode into town at dawn.', 'Part Two\nTwo years later, she came home.',
+      'He opened the door\n\nDoor after door, the hall went on.', 'Drip drip drip drip. The tap would not stop.']) {
+      assert.ok(!find(check(text), 'repeated-word'), text);
+    }
+    assert.ok(find(check('I saw the the dog.'), 'repeated-word'));
+  });
+
+  t('Accept all removes at most one word from any sentence', () => {
+    const text = 'He left. She stayed there alone. Fine.';
+    const del = word => { const at = text.indexOf(word); return { start: at, end: at + word.length, text: word, replacement: '' }; };
+    const out = Engine.applyFixes(text, [del('She '), del('stayed '), del('there '), del(' alone')]);
+    assert.strictEqual(out.applied, 1);
+    assert.strictEqual(out.text.split(' ').length, text.split(' ').length - 1);
+  });
+
   console.log('\nVerb tense:');
 
   const tense = (text, options) => check(text, Object.assign({ mode: 'formal' }, options || {}))
@@ -441,6 +478,15 @@ function runTests() {
     assert.deepStrictEqual(tense('She hadn\'t came back yet.'), ['came->come']);
     assert.deepStrictEqual(tense('I seen it with my own eyes.'), ['seen->saw']);
     for (const text of ['Are you done?', 'Have you seen my keys?', 'I had a saw and a hammer.', 'She has got a new car.']) {
+      assert.deepStrictEqual(tense(text), [], text);
+    }
+  });
+
+  t('tense shifts are fixed one at a time, never by Accept all, and stop at time words', () => {
+    const issue = check('She grabbed her coat and runs out the door.').find(i => i.ruleId === 'tense-shift');
+    assert.strictEqual(issue.bulk, false);
+    assert.strictEqual(issue.severity, 'suggestion');
+    for (const text of ['She left the army in 2010 and runs a bakery now.', 'He moved to Leeds and still teaches there.']) {
       assert.deepStrictEqual(tense(text), [], text);
     }
   });

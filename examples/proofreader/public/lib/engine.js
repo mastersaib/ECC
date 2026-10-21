@@ -323,7 +323,11 @@
     return text.slice(0, issue.start) + issue.replacement + text.slice(issue.end);
   }
 
-  /** Apply several fixes, last first, skipping any that overlap. */
+  /**
+   * Apply several fixes, last first, skipping any that overlap. Together they
+   * may remove at most one word from any sentence, the same limit as one fix.
+   * Offsets stay valid in the original text because later fixes go first.
+   */
   function applyFixes(text, issues) {
     const sorted = issues
       .filter(i => i.replacement !== null && i.replacement !== undefined)
@@ -331,13 +335,18 @@
     let out = text;
     let floor = Infinity;
     let applied = 0;
+    const lostIn = new Map();
     for (const issue of sorted) {
       if (issue.end > floor) continue;
+      const lost = VoiceGuard.measure(issue.text, issue.replacement).lost;
+      const sentence = VoiceGuard.sentenceStart(text, issue.start);
+      if (lost && (lostIn.get(sentence) || 0) + lost > VoiceGuard.LIMITS.wordsLost) continue;
       const next = applyFix(out, issue);
       if (next !== out) {
         out = next;
         applied++;
         floor = issue.start;
+        if (lost) lostIn.set(sentence, (lostIn.get(sentence) || 0) + lost);
       }
     }
     return { text: out, applied };

@@ -200,6 +200,9 @@ head headed headed heads -
     'is are am was were be been being has have had').split(' '));
   const VERB_FOLLOWERS = new Set(['him', 'her', 'them', 'me', 'us', 'it', 'out', 'off', 'away', 'back', 'up', 'down',
     'around', 'aside', 'asleep', 'apart', 'home', 'outside', 'inside', 'forward']);
+  // Words that put a verb in a different time on purpose: "She left the army in
+  // 2010 and runs a bakery now."
+  const TIME_MARKERS = new Set(['now', 'still', 'today', 'nowadays', 'currently', 'anymore', 'tonight', 'lately', 'since']);
   const VERBISH = new Set(['was', 'were', 'is', 'are', 'am', 'had', 'has', 'have', 'could', 'would', 'should',
     'might', 'will', 'can', 'did', 'do', 'does', 'must', 'shall', 'may']);
 
@@ -287,10 +290,13 @@ head headed headed heads -
           if (!found) continue;
           const { token, replacement, wrong } = found;
           if (ctx.inDialogue(tokens[source.index].at) || ctx.inDialogue(token.at)) continue;
+          if (tokens.slice(i).some(t => TIME_MARKERS.has(t.word.toLowerCase()))) continue;
           ctx.add({
             start: token.at, end: token.at + token.word.length,
             replacement: Spelling.matchCase(token.word, replacement),
-            severity: 'warning', voice: 'dialogue',
+            // A past event beside a present state can be right ("grew up in Lagos and speaks
+            // four languages"), so this is the author's call: one at a time, never in Accept all.
+            severity: 'suggestion', voice: 'dialogue', bulk: false,
             message: `Tense shift: "${tokens[source.index].word}" is ${source.tense} tense, "${token.word}" is ${wrong}.`,
             explanation: 'Two verbs that share a subject in one sentence normally keep the same tense. Keep it if the change in time is deliberate.'
           });
