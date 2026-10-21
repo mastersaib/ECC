@@ -101,7 +101,7 @@ reported, `locateIssues` and `relocateIssues` protect every AI issue,
 page's Accept checks again before writing. `applyFixes` also keeps a batch
 to one removed word per sentence. **Accept all** applies rule fixes only,
 and not voice notes (severity info) or fixes a rule marks `bulk: false`
-(tense shifts).
+(tense shifts, and repeated words that may be deliberate).
 
 A fix that removes a line or paragraph break is refused, and the
 punctuation-only shortcut requires the same words, so *Go. He went.* cannot
@@ -124,20 +124,26 @@ finds each quote in the text, using the quoted sentence to tell repeats apart,
 and drops any it cannot find. After edits, `relocateIssues` finds each AI
 finding again or drops it. Both run the voice guard (above).
 
-Anchoring never guesses. The quote must occur exactly once, as whole words,
-in its context sentence, and the sentence must be in the text; curly and
-straight quotes count as equal and spacing may differ. If the sentence has
-since been edited, the words on either side of the quote (three, then two)
-must still identify one place. Otherwise the finding is dropped and counted
-in "could not be matched". A delete of a doubled word removes one copy and
-takes one neighbouring space; a delete that carries new words, a flow
-finding or an unrecognized category is advice only. Flow
+Anchoring never guesses. The quote, trimmed of edge spaces, must occur
+exactly once, as whole words, in its context sentence, and the sentence must
+be in the text; curly and straight quotes count as equal, and the sentence's
+spacing may differ but the quote's may not. A sentence that occurs several
+times is placed only if Claude flagged every copy. If the sentence has since
+been edited, the words on either side of the quote (three, then two) must
+still identify one place close to where it was. Otherwise the finding is
+dropped and counted in "could not be matched". `relocateIssues(text, issues,
+prevText)` maps each finding through the one region the author edited, so a
+finding before or after the edit keeps its exact place. A delete of a doubled
+word keeps the first copy and takes one neighbouring space; a delete that
+carries new words, a flow finding or an unrecognized category is advice
+only. Flow
 suggestions and notes are always suggestions: their proposed wording is
 kept in `suggestion`, never in `replacement`.
 
 The prompt limits Claude to mechanics: grammar, verb tense, punctuation,
-spelling, capitalization and consistency. *Delete* is allowed only for a
-doubled word or a stray mark, and anything larger than the guard's limits
+spelling, capitalization and consistency. It never asks for *delete*: a
+doubled word or a stray mark comes back as a *replace* (*left..* to
+*left.*), and anything larger than the guard's limits
 must come back as a note. Its tense section asks Claude to infer the
 narrative tense from the narration, fix only the verb that slips, leave
 dialogue alone and keep deliberate shifts.

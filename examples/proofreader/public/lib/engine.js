@@ -68,7 +68,9 @@
 
   function scanSingleQuotes(text, spans) {
     const covered = [];
-    for (const m of text.matchAll(/‘(?:[^’\n]|’(?=\p{L}))*’(?!\p{L})/gu)) {
+    // A ’ after a letter and before a space is an apostrophe ("walkin’ home", "the lads’ van")
+    // when the speech still closes later on the line, after punctuation.
+    for (const m of text.matchAll(/‘(?:[^’\n]|’(?=\p{L})|(?<=\p{L})’(?=[ \t][^‘\n]*?[,.!?…—–]’))*’(?!\p{L})/gu)) {
       spans.push({ start: m.index, end: m.index + m[0].length, kind: 'single', closed: true });
       covered.push(m.index);
     }
@@ -80,7 +82,9 @@
       spans.push({ start, end: lineEnd < 0 ? text.length : lineEnd, kind: 'single', closed: false });
     }
     // Straight single quotes count only when they wrap at least two words.
-    for (const m of text.matchAll(/(^|[\s(—])('(?=\p{L})(?:[^'\n]|'(?=\p{L}))*\s(?:[^'\n]|'(?=\p{L}))*'(?!\p{L}))/gmu)) {
+    const apos = "(?<=\\p{L})'(?=[ \\t][^'\\n]*[,.!?…—–]'(?!\\p{L}))";
+    const straight = new RegExp(`(^|[\\s(—])('(?=\\p{L})(?:[^'\\n]|'(?=\\p{L})|${apos})*\\s(?:[^'\\n]|'(?=\\p{L})|${apos})*'(?!\\p{L}))`, 'gmu');
+    for (const m of text.matchAll(straight)) {
       const start = m.index + m[1].length;
       spans.push({ start, end: start + m[2].length, kind: 'single', closed: true });
     }
@@ -323,6 +327,18 @@
     return text.slice(0, issue.start) + issue.replacement + text.slice(issue.end);
   }
 
+  const ABBREV = /(?:^|[^\p{L}])(?:Mr|Mrs|Ms|Mx|Dr|St|Jr|Sr|Prof|Rev|Gen|Capt|Lt|Col|Sgt|vs|etc|\p{Lu})\.$/u;
+
+  /** Start of the sentence for the batch limit, not fooled by "Mr." or a quoted "Halt!". */
+  function sentenceKey(text, pos) {
+    let s = VoiceGuard.sentenceStart(text, pos);
+    while (s > 0 && text[s - 1] !== '\n' &&
+      (ABBREV.test(text.slice(Math.max(0, s - 8), s).trimEnd()) || /^\p{Ll}/u.test(text[s] || ''))) {
+      s = VoiceGuard.sentenceStart(text, s - 1);
+    }
+    return s;
+  }
+
   /**
    * Apply several fixes, last first, skipping any that overlap. Together they
    * may remove at most one word from any sentence, the same limit as one fix.
@@ -339,7 +355,7 @@
     for (const issue of sorted) {
       if (issue.end > floor) continue;
       const lost = VoiceGuard.measure(issue.text, issue.replacement).lost;
-      const sentence = VoiceGuard.sentenceStart(text, issue.start);
+      const sentence = sentenceKey(text, issue.start);
       if (lost && (lostIn.get(sentence) || 0) + lost > VoiceGuard.LIMITS.wordsLost) continue;
       const next = applyFix(out, issue);
       if (next !== out) {

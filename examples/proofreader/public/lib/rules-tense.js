@@ -33,7 +33,7 @@
   const VERB_TABLE = `
 go went gone goes sbp
 come came come comes sbp
-see saw seen sees sbpx
+see saw seen sees sbx
 take took taken takes sbp
 get got got gets sbpx
 make made made makes sb
@@ -58,14 +58,14 @@ fall fell fallen falls p
 fly flew flown flies p
 grow grew grown grows sbpx
 throw threw thrown throws sbp
-draw drew drawn draws sbp
+draw drew drawn draws sb
 drive drove driven drives bp
 ride rode ridden rides bp
 rise rose risen rises sb
-break broke broken breaks p
+break broke broken breaks -
 choose chose chosen chooses sbp
 freeze froze frozen freezes sbp
-steal stole stolen steals sbp
+steal stole stolen steals sb
 wear wore worn wears sbp
 swim swam swum swims sbp
 sing sang sung sings sbp
@@ -186,7 +186,6 @@ head headed headed heads -
   }
 
   const THIRD_PERSON = new Set(['he', 'she', 'it']);
-  const OTHER_PERSONS = new Set(['i', 'you', 'we', 'they']);
   const NEW_SUBJECTS = new Set(['i', 'he', 'she', 'we', 'they']);
   const NOT_NAMES = new Set(('The A An This That These Those Then When While After Before As If But And So Or Now Later ' +
     'Suddenly Still Yet There Here His Her Their Our My Your Its One Some Every Each All No Not Once Soon At In On By For ' +
@@ -203,6 +202,8 @@ head headed headed heads -
   // Words that put a verb in a different time on purpose: "She left the army in
   // 2010 and runs a bakery now."
   const TIME_MARKERS = new Set(['now', 'still', 'today', 'nowadays', 'currently', 'anymore', 'tonight', 'lately', 'since']);
+  const CLAUSE_LINKS = new Set(('and but or so then when while because if as after before until since though ' +
+    'although once now yet where whereas unless').split(' '));
   const VERBISH = new Set(['was', 'were', 'is', 'are', 'am', 'had', 'has', 'have', 'could', 'would', 'should',
     'might', 'will', 'can', 'did', 'do', 'does', 'must', 'shall', 'may']);
 
@@ -222,24 +223,33 @@ head headed headed heads -
     return out;
   }
 
-  function subjectOf(token) {
-    const lower = token.toLowerCase().replace(/’/g, "'");
-    if (THIRD_PERSON.has(lower)) return 'third';
-    if (OTHER_PERSONS.has(lower)) return 'other';
-    if (/^\p{Lu}\p{Ll}+$/u.test(token) && !NOT_NAMES.has(token)) return 'third';
-    return null;
+  const NOT_BEFORE_SUBJECT = new Set(('the a an his her their our my your its this that these those of through for ' +
+    'with at in on to from by about during into').split(' '));
+
+  /**
+   * Whether tokens[i] starts a clause as a third-person subject: "he", "she", or
+   * a name that is not a modifier ("the Christmas drinks", "the Lake District").
+   * First and second person are left to the AI check: their base forms are too
+   * often infinitives ("watched them come and go").
+   */
+  function isSubject(tokens, i) {
+    const word = tokens[i].word;
+    const prev = tokens[i - 1] && tokens[i - 1].word;
+    if (prev && NOT_BEFORE_SUBJECT.has(prev.toLowerCase())) return false;
+    if (THIRD_PERSON.has(word.toLowerCase()) && word.toLowerCase() !== 'it') return true;
+    if (!/^\p{Lu}\p{Ll}+$/u.test(word) || NOT_NAMES.has(word)) return false;
+    return !prev || /^\p{Ll}/u.test(prev) || NOT_NAMES.has(prev);
   }
 
   /** The verb right after a subject (one -ly adverb allowed): { index, verb, tense } or null. */
-  function verbAfterSubject(tokens, i, person) {
+  function verbAfterSubject(tokens, i) {
     let j = i + 1;
     if (tokens[j] && /ly$/i.test(tokens[j].word) && !byPast.has(tokens[j].word.toLowerCase())) j++;
     const t = tokens[j];
     if (!t) return null;
     const w = t.word.toLowerCase();
     if (byPast.has(w) && byPast.get(w).past !== byPast.get(w).base) return { index: j, verb: byPast.get(w), tense: 'past' };
-    if (person === 'third' && byThird.has(w)) return { index: j, verb: byThird.get(w), tense: 'present' };
-    if (person === 'other' && byBase.has(w) && byBase.get(w).past !== w) return { index: j, verb: byBase.get(w), tense: 'present' };
+    if (byThird.has(w)) return { index: j, verb: byThird.get(w), tense: 'present' };
     return null;
   }
 
@@ -250,6 +260,12 @@ head headed headed heads -
       const pasts = [...PARTICIPLE_ERRORS.keys()].join('|');
       const re = new RegExp(`\\b(had|has|have|['’]ve)(?:n['’]t)?(\\s+)((?:already|just|never|not|always|even|finally|also|recently|long)\\s+)?(${pasts})\\b`, 'gdiu');
       ctx.each(re, m => {
+        // "Has Drew finished?", "She has Fell ponies": a capitalised form mid-sentence is a name.
+        if (/^\p{Lu}\p{Ll}+$/u.test(m[4])) return null;
+        // "Everything she had went to her sister": "had" ends a relative clause, and the past
+        // form is the main verb. Skip when the pronoun follows a noun or quantifier.
+        const lead = /(\p{L}+)[ \t]+(?:I|you|he|she|we|they)[ \t]*$/iu.exec(ctx.text.slice(Math.max(0, m.index - 40), m.index));
+        if (lead && !CLAUSE_LINKS.has(lead[1].toLowerCase()) && !isVerbish(lead[1]) && !byThird.has(lead[1].toLowerCase())) return null;
         const right = PARTICIPLE_ERRORS.get(m[4].toLowerCase());
         const [start, end] = m.indices[4];
         return {
@@ -260,11 +276,12 @@ head headed headed heads -
         };
       });
       // Not "Are you done?" or "Have you seen it?": there "done" and "seen" are standard.
-      ctx.each(/(?<!\b(?:am|are|is|was|were|be|been|being|get|gets|got|feel|felt|seem|seemed|have|has|had|having)\s+)\b(I|you|we|they|he|she)(\s+)(seen|done)\b(?!\s+(?:by|with|for)\b)/gdi, m => {
-        const right = m[3] === 'seen' ? 'saw' : 'did';
+      // Nor "Haven't I seen you?", "What's he done?", "Has he or she seen it?".
+      ctx.each(/(?<!\b(?:am|are|is|was|were|be|been|being|get|gets|got|feel|felt|seem|seemed|have|has|had|having)(?:n['’]t)?(?:\s+not)?\s+)(?<!['’](?:s|ve|d)\s+)(?<!\b(?:I|you|we|they|he|she|it)\s+(?:and|or)\s+)\b(I|you|we|they|he|she)(\s+)(seen|done)\b(?!\s+(?:by|with|for)\b)/gdi, m => {
+        const right = m[3].toLowerCase() === 'seen' ? 'saw' : 'did';
         const [start, end] = m.indices[3];
         return {
-          start, end, replacement: right,
+          start, end, replacement: Spelling.matchCase(m[3], right),
           severity: 'warning', voice: 'soft',
           message: `"${m[3]}" needs "have" or "had"; the simple past is "${right}".`,
           explanation: `"${m[1]} ${m[3]}" is common in speech and some dialects. Standard written English uses "${m[1]} ${right}" or "${m[1]} had ${m[3]}".`
@@ -280,13 +297,12 @@ head headed headed heads -
       for (const seg of segments(ctx.text)) {
         const tokens = [...seg.text.matchAll(TOKEN)].map(m => ({ word: m[0], at: seg.start + m.index }));
         for (let i = 0; i < tokens.length - 3; i++) {
-          const person = subjectOf(tokens[i].word);
-          if (!person) continue;
-          const source = verbAfterSubject(tokens, i, person);
+          if (!isSubject(tokens, i)) continue;
+          const source = verbAfterSubject(tokens, i);
           // "She looks tired and worried", "I think he left": linking and mental verbs in the
           // present do not set the tense of what follows. In the past they do.
           if (!source || (source.tense === 'present' && source.verb.flags.includes('x'))) continue;
-          const found = findSecondVerb(tokens, source, person);
+          const found = findSecondVerb(tokens, source, ctx.text);
           if (!found) continue;
           const { token, replacement, wrong } = found;
           if (ctx.inDialogue(tokens[source.index].at) || ctx.inDialogue(token.at)) continue;
@@ -306,7 +322,7 @@ head headed headed heads -
     }
   };
 
-  function findSecondVerb(tokens, source, person) {
+  function findSecondVerb(tokens, source, text) {
     for (let j = source.index + 1; j < Math.min(tokens.length, source.index + 14); j++) {
       const w = tokens[j].word.toLowerCase().replace(/’/g, "'");
       // "to" before a verb is an infinitive ("decided to stay and helps"); before anything else
@@ -318,28 +334,39 @@ head headed headed heads -
       if (tokens[k] && /^(then|quickly|slowly|suddenly|finally|quietly|carefully)$/i.test(tokens[k].word)) k++;
       const token = tokens[k];
       if (!token) return null;
+      // "a wait-and-see approach": part of a hyphenated compound, not a verb.
+      if (text[tokens[j].at - 1] === '-' || text[tokens[j].at + 3] === '-') continue;
       // "They argued and fights broke out": a noun followed by its own verb starts a new clause.
       if (isVerbish(tokens[k + 1] && tokens[k + 1].word)) return null;
-      const found = secondVerb(token, source, person, tokens[k + 1]);
+      const found = secondVerb(token, source, tokens[k + 1], tokens[j - 1], tokens[j - 2]);
       if (found) return found;
       // A list ("her keys, phone and wallet and runs"): keep looking for the verb.
     }
     return null;
   }
 
-  function secondVerb(token, source, person, next) {
+  /**
+   * The verb after "and" if it slips tense: an -s form after a past verb, or a
+   * past form after an -s verb. `before` is the word before "and".
+   */
+  function secondVerb(token, source, next, before, beforeThat) {
+    // "She meets Sam and Drew": after "and" a capital marks a name.
+    if (/^\p{Lu}/u.test(token.word)) return null;
     const c = token.word.toLowerCase();
+    const b = before ? before.word.toLowerCase() : '';
     const clearlyVerb = Boolean(next) && VERB_FOLLOWERS.has(next.word.toLowerCase());
     if (source.tense === 'past') {
+      // "burgers and shakes", "walks and runs": a list of plural nouns.
+      const listOfNouns = b.length > 3 && /s$/.test(b) && !['his', 'its', 'was', 'has', 'this', 'thus', 'does', 'goes'].includes(b);
       const asThird = byThird.get(c);
-      if (asThird && (asThird.flags.includes('s') || clearlyVerb)) return { token, replacement: asThird.past, wrong: 'present' };
-      const asBase = byBase.get(c);
-      if (asBase && (asBase.flags.includes('b') || clearlyVerb) && asBase.past !== c) return { token, replacement: asBase.past, wrong: 'present' };
+      if (asThird && !listOfNouns && (asThird.flags.includes('s') || clearlyVerb)) return { token, replacement: asThird.past, wrong: 'present' };
       return null;
     }
+    // "a short and whispered answer": coordinated adjectives in a noun phrase.
+    if (beforeThat && /^(a|an|the)$/i.test(beforeThat.word)) return null;
     const asPast = byPast.get(c);
     if (asPast && (asPast.flags.includes('p') || clearlyVerb) && asPast.past !== asPast.base) {
-      return { token, replacement: person === 'third' ? asPast.third : asPast.base, wrong: 'past' };
+      return { token, replacement: asPast.third, wrong: 'past' };
     }
     return null;
   }

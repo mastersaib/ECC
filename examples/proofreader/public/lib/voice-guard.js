@@ -139,6 +139,9 @@
     // Punctuation, capitalization and spacing only: the same words, untouched.
     const bare = t => words(t).map(w => w.replace(/['-]/g, '')).join(' ');
     if (letters(original) === letters(replacement) && bare(original) === bare(replacement)) return { ok: true };
+    // Hyphenating or unhyphenating the same words: "mother in law" <-> "mother-in-law".
+    const joined = t => String(t).toLowerCase().replace(/(?<=[\p{L}\p{N}]) (?=[\p{L}\p{N}])/gu, '-');
+    if (joined(original) === joined(replacement)) return { ok: true };
     if (deletesSentence(text, start, end, replacement)) {
       return { ok: false, reason: 'It would delete a whole sentence.' };
     }

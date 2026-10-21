@@ -121,7 +121,7 @@
     // Last line of defence: a paragraph both sides still have must survive.
     // If the alignment ever loses one, keep the local text whole and hand the
     // other side's text back as a conflict, which the caller saves as a version.
-    if (dropsCommonLine(M, T, out)) return { text: mine, conflicts: Math.max(1, conflicts), theirsConflicts: [theirs] };
+    if (dropsCommonLine(M, T, out) || duplicatesLine(B, M, T, out)) return { text: mine, conflicts: Math.max(1, conflicts), theirsConflicts: [theirs] };
     return { text: out.join('\n'), conflicts, theirsConflicts };
   }
 
@@ -129,6 +129,19 @@
     const counts = new Map();
     for (const line of lines) if (line.trim()) counts.set(line, (counts.get(line) || 0) + 1);
     return counts;
+  }
+
+  /** A line appearing more often than either side (or both sides' additions) can explain. */
+  function duplicatesLine(base, mine, theirs, out) {
+    const b = countLines(base);
+    const m = countLines(mine);
+    const t = countLines(theirs);
+    for (const [line, n] of countLines(out)) {
+      const mi = m.get(line) || 0;
+      const ti = t.get(line) || 0;
+      if (n > Math.max(mi, ti, mi + ti - (b.get(line) || 0))) return true;
+    }
+    return false;
   }
 
   function dropsCommonLine(mine, theirs, out) {

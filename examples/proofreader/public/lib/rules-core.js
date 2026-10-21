@@ -195,6 +195,9 @@
   // ---------------------------------------------------------------- grammar
 
   const LEGIT_REPEATS = new Set(['had', 'that', 'is', 'do']);
+  // Words that are doubled on purpose in names and loanwords ("mahi mahi").
+  const REDUPLICATED = new Set(['mahi', 'ylang', 'beri', 'pom', 'tom', 'choo', 'aye', 'chin', 'can', 'dum', 'pooh',
+    'night', 'boo', 'walla', 'bora', 'pago', 'baden', 'bye', 'tut', 'tsk', 'bon', 'yada']);
   const EMPHATIC_REPEATS = new Set([
     'very', 'no', 'so', 'now', 'there', 'well', 'bye', 'ha', 'yes', 'oh', 'go',
     'really', 'tut', 'chop', 'knock', 'blah', 'never', 'far', 'round', 'on',
@@ -214,10 +217,13 @@
         const after = ctx.text.slice(m.indices[4][1]).match(/^[ \t,]*(\p{L}+)/u);
         if ((before && before[1].toLowerCase() === word) || (after && after[1].toLowerCase() === word)) return null;
         const emphatic = EMPHATIC_REPEATS.has(word);
+        // "Bora Bora", "Duran Duran", "mahi mahi": probably a name, so one at a time, never in Accept all.
+        const name = (/^\p{Lu}/u.test(m[4]) && word !== 'i') || REDUPLICATED.has(word);
         return {
           start: m.indices[3][0], end: m.indices[4][1], replacement: '',
-          severity: emphatic ? 'info' : 'error',
+          severity: emphatic ? 'info' : name ? 'suggestion' : 'error',
           voice: emphatic ? 'soft' : 'dialogue',
+          bulk: name ? false : undefined,
           message: `Repeated word: "${m[2]} ${m[4]}".`
         };
       });

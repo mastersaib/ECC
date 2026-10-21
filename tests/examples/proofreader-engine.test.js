@@ -440,6 +440,21 @@ function runTests() {
     assert.strictEqual(out.text.split(' ').length, text.split(' ').length - 1);
   });
 
+  t('reduplicated names are never fixed by Accept all; abbreviations do not split the batch limit', () => {
+    const bulk = text => Engine.applyFixes(text, check(text, { mode: 'formal' })
+      .filter(i => i.replacement !== null && i.bulk !== false && i.severity !== 'info')).text;
+    assert.strictEqual(bulk('They flew to Bora Bora. We ordered the mahi mahi. I saw the the dog.'),
+      'They flew to Bora Bora. We ordered the mahi mahi. I saw the dog.');
+    assert.strictEqual(bulk('Mr. Smith and and Mrs. Jones saw the the dog.').split(' ').length, 9, 'one word removed, not two');
+  });
+
+  t('dialect inside single-quoted speech stays protected past a word-final apostrophe', () => {
+    for (const text of ['‘I was walkin’ home and I seen him,’ said Bert.', "'I was walkin' home and I seen him,' said Bert.",
+      '‘The lads’ van was outside. I seen it,’ she said.']) {
+      assert.ok(!check(text, { mode: 'creative' }).some(i => i.ruleId === 'verb-form'), text);
+    }
+  });
+
   console.log('\nVerb tense:');
 
   const tense = (text, options) => check(text, Object.assign({ mode: 'formal' }, options || {}))
@@ -451,7 +466,6 @@ function runTests() {
     assert.deepStrictEqual(tense('He went to the store and buys milk.'), ['buys->bought']);
     assert.deepStrictEqual(tense('She grabbed her keys, phone and wallet and runs to the car.'), ['runs->ran']);
     assert.deepStrictEqual(tense('She grabs her coat and ran out.'), ['ran->runs']);
-    assert.deepStrictEqual(tense('I opened the door and see him there.'), ['see->saw']);
     assert.deepStrictEqual(tense('She took the call and heads out.'), ['heads->headed']);
   });
 
@@ -468,7 +482,21 @@ function runTests() {
       'He left, and she walks home alone.',
       'She traded jokes and smiles with him.',
       'It ran in fits and starts.',
-      'The children laughed and runs were scored.'
+      'The children laughed and runs were scored.',
+      // From the second review: infinitives, perception verbs, imperatives, noun lists,
+      // idioms, compounds, names and modifiers
+      'She taught her sisters to read and write.',
+      'We watched them come and go.',
+      'It made me stop and think.',
+      'Take the coat she gave you and go.',
+      'She bought burgers and shakes for everyone.',
+      'She carried the plates and drinks out to the garden.',
+      'She took a wait-and-see approach.',
+      'He buys a hammer and saw at the store.',
+      'She meets Sam and Drew at the station.',
+      'She gives a short and whispered answer.',
+      'He skipped the Christmas drinks and went home early.',
+      'She finds it closed and walks home.'
     ]) assert.deepStrictEqual(tense(text), [], text);
   });
 
@@ -477,7 +505,10 @@ function runTests() {
     assert.deepStrictEqual(tense('I have drank too much coffee.'), ['drank->drunk']);
     assert.deepStrictEqual(tense('She hadn\'t came back yet.'), ['came->come']);
     assert.deepStrictEqual(tense('I seen it with my own eyes.'), ['seen->saw']);
-    for (const text of ['Are you done?', 'Have you seen my keys?', 'I had a saw and a hammer.', 'She has got a new car.']) {
+    assert.deepStrictEqual(tense('I SEEN IT.'), ['SEEN->SAW']);
+    for (const text of ['Are you done?', 'Have you seen my keys?', 'I had a saw and a hammer.', 'She has got a new car.',
+      'Everything she had went to her sister.', 'The only car we had broke down in Wales.', 'Has Drew finished his homework?',
+      "Haven't I seen you somewhere before?", "What's he done now?", 'Has he or she seen the document?']) {
       assert.deepStrictEqual(tense(text), [], text);
     }
   });

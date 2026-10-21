@@ -79,7 +79,7 @@
   const VOICE_RULES = [
     'Preserve the author\'s voice. You are a proofreader: you correct mechanics. You do not edit content, and you do not rewrite.',
     '- Never delete, merge away or shorten a sentence, clause or phrase the author wrote, even if it seems redundant, wordy, off-topic or repeated. If something may be an accidental repetition, report it with action "note".',
-    '- Use action "delete" only for a stray punctuation mark. For a doubled word, quote both copies ("the the") with action "replace" and replacement "the".',
+    '- For a stray punctuation mark, use action "replace": quote the word before it with the mark and give the word with the mark removed ("left.." -> "left.", "want, to" -> "want to"). For a doubled word, quote both copies ("the the") with action "replace" and replacement "the". Do not use action "delete".',
     '- Every fix is minimal: quote only the wrong words, plus a neighbouring word if needed so that the quote occurs only once in its sentence ("boys was", not "was"). Never quote or replace a whole sentence.',
     '- For a punctuation fix, quote the words on either side of the mark: "Yes she said" -> "Yes, she said". Never quote a punctuation mark on its own.',
     '- Never change vocabulary, idiom, slang, dialect words, sentence rhythm or tone because you prefer something else.',
@@ -249,9 +249,15 @@
     return snippet.split(/\s+/).map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('\\s+');
   }
 
+  const escape = t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
   /** Every start of the quote inside matches of before + quote + after, in the folded text. */
   function findAround(folded, before, quote, after) {
-    const re = new RegExp(`${before ? loose(before) : ''}(${loose(quote)})${after ? loose(after) : ''}`, 'gdu');
+    // Only the context's spacing may differ; the quote itself must match exactly,
+    // so the span (quote.length) and its narrowing line up with the text.
+    // Each whitespace character of the quote matches exactly one in the text.
+    const exact = escape(quote).replace(/\s/g, '\\s');
+    const re = new RegExp(`${before ? loose(before) : ''}(${exact})${after ? loose(after) : ''}`, 'gdu');
     const out = [];
     for (const m of folded.matchAll(re)) {
       const at = m.indices[1][0];
@@ -261,32 +267,35 @@
   }
 
   /**
-   * Where the AI's quote sits in the text, or -1. The quote must occur exactly
-   * once, as whole words, in its context sentence, and the sentence must be in
-   * the text (spacing may differ). If the sentence has since been edited, the
-   * three, then two, words on each side of the quote must still pin it down
-   * uniquely. There is no fallback to the first match anywhere: a fix in the
-   * wrong place is worse than a finding dropped.
+   * Where the AI's (trimmed) quote sits in the text, or -1. `copies` is how many
+   * findings carry this same quote and context: when the sentence occurs more
+   * than once, it is placed only if every copy was flagged.
    */
-  function findAnchor(text, quote, context, used) {
+  function findAnchor(text, quote, context, used, copies) {
     const q = fold(quote).trim();
     const c = fold(context || '');
     if (!q || !c) return -1;
     const hits = occurrences(c, q);
     if (hits.length !== 1) return -1;
     const folded = fold(text);
-    const lead = fold(quote).length - fold(quote).trimStart().length;
-    const free = list => list.filter(at => !(used && used.has(at - lead)));
+    const free = list => list.filter(at => !(used && used.has(at)));
     const before = c.slice(0, hits[0]);
     const after = c.slice(hits[0] + q.length);
-    const whole = free(findAround(folded, before, q, after));
-    if (whole.length) return whole[0] - lead;
+    const pick = all => {
+      const open = free(all);
+      if (!open.length) return -1;
+      if (all.length === 1 || all.length === (copies || 1)) return open[0];
+      return -1; // ambiguous: never guess
+    };
+    const whole = findAround(folded, before, q, after);
+    if (whole.length) return pick(whole);
     for (const n of [3, 2]) {
       const b = tailChunks(before, n);
       const a = headChunks(after, n);
       if (!b.trim() && !a.trim()) break;
-      const near = free(findAround(folded, b, q, a));
-      if (near.length === 1) return near[0] - lead;
+      // The sentence found must still be the stored one, changed by no more than one fix.
+      const near = findAround(folded, b, q, a).filter(at => closeTo(c, folded, at));
+      if (near.length) return pick(near);
     }
     return -1;
   }
@@ -305,6 +314,14 @@
     return str.slice(0, last.index + last[0].length);
   }
 
+  function closeTo(context, text, at) {
+    let e = at;
+    while (e < text.length && text[e] !== '\n' && !/[.!?…]/.test(text[e])) e++;
+    while (e < text.length && /[.!?…"”’)\]]/.test(text[e])) e++;
+    const m = VoiceGuard.measure(context, text.slice(VoiceGuard.sentenceStart(text, at), e));
+    return m.removed + m.added <= VoiceGuard.LIMITS.wordsChanged;
+  }
+
   /** For a doubled word or phrase ("the the"), the first copy: replacing with it removes one. */
   function firstOfDoubled(quote) {
     const parts = quote.trim().split(/\s+/);
@@ -312,7 +329,10 @@
     const half = parts.length / 2;
     const norm = w => w.toLowerCase().replace(/[^\p{L}\p{N}'’]/gu, '');
     for (let i = 0; i < half; i++) if (!norm(parts[i]) || norm(parts[i]) !== norm(parts[i + half])) return null;
-    return parts.slice(0, half).join(' ');
+    const kept = parts.slice(0, half);
+    const tail = /[^\p{L}\p{N}'’]*$/u.exec(parts[parts.length - 1])[0];
+    kept[half - 1] = kept[half - 1].replace(/[^\p{L}\p{N}'’]*$/u, '') + tail;
+    return kept.join(' ');
   }
 
   const lower = value => String(value || '').trim().toLowerCase();
@@ -324,17 +344,28 @@
     const proposed = typeof raw.replacement === 'string' && raw.replacement !== quote ? raw.replacement : null;
     let replacement = null;
     let suggestion = null;
+    let unclearDelete = false;
     if (action === 'delete') {
       // A delete that also carries new words contradicts itself: treat it as advice.
       if (proposed && proposed.trim()) suggestion = proposed;
-      else replacement = firstOfDoubled(quote) || '';
+      else {
+        const doubled = firstOfDoubled(quote);
+        const hasWords = VoiceGuard.words(quote).length > 0;
+        const hasMarks = /[^\p{L}\p{N}\s'’-]/u.test(quote);
+        if (doubled !== null) replacement = doubled;
+        else replacement = '';
+        // A delete for a stray mark that also quotes words would take the author's
+        // words with it. The guard reviews it first (so a sentence keeps its own
+        // reason); if it would pass, locateIssues makes it a message only.
+        unclearDelete = doubled === null && hasWords && hasMarks;
+      }
     } else if (action === 'replace') {
       replacement = proposed;
     } else if (proposed) {
       suggestion = proposed; // a note, or an unknown action
     }
     if (!editable && replacement !== null) return { replacement: null, suggestion: replacement || null };
-    return { replacement, suggestion };
+    return { replacement, suggestion, unclearDelete };
   }
 
   function normalizeIssue(raw) {
@@ -342,8 +373,9 @@
     const category = known ? lower(raw.category) : 'style';
     const severity = category !== 'flow' && SEVERITIES.includes(lower(raw.severity)) ? lower(raw.severity) : 'suggestion';
     // Flow, and anything Galley cannot classify, is the author's call: a suggestion, never an edit.
-    const { replacement, suggestion } = proposal(raw, known && category !== 'flow');
+    const { replacement, suggestion, unclearDelete } = proposal(raw, known && category !== 'flow');
     return {
+      unclearDelete,
       ruleId: `ai-${category}`,
       category,
       severity,
@@ -367,12 +399,21 @@
     const issues = [];
     const used = new Set();
     let dropped = 0;
-    for (const raw of list) {
-      if (!raw || typeof raw.quote !== 'string') {
+    const keyOf = (q, c) => `${fold(q).trim()}\u0000${fold(c || '')}`;
+    const copies = new Map();
+    for (const r of list) if (r && typeof r.quote === 'string') copies.set(keyOf(r.quote, r.context), (copies.get(keyOf(r.quote, r.context)) || 0) + 1);
+    for (const given of list) {
+      if (!given || typeof given.quote !== 'string') {
         dropped++;
         continue;
       }
-      const at = findAnchor(chunk.text, raw.quote, raw.context, used);
+      // Edge whitespace in the quote is not part of the fix: trim it, and the replacement with it.
+      const edged = given.quote !== given.quote.trim();
+      const raw = Object.assign({}, given, {
+        quote: given.quote.trim(),
+        replacement: edged && typeof given.replacement === 'string' ? given.replacement.trim() : given.replacement
+      });
+      const at = findAnchor(chunk.text, raw.quote, raw.context, used, copies.get(keyOf(raw.quote, raw.context)));
       if (at < 0) {
         dropped++;
         continue;
@@ -380,14 +421,13 @@
       used.add(at);
       const issue = normalizeIssue(raw);
       if (issue.category === 'flow' && !flowOn) continue;
-      if (issue.replacement !== null) narrowEdit(issue, fullText, chunk.offset + at);
-      issue.start = chunk.offset + at + (issue.anchor.trimStart || 0);
-      issue.end = chunk.offset + at + raw.quote.length - (issue.anchor.trimEnd || 0);
+      if (issue.replacement !== null) narrowEdit(issue);
+      Object.assign(issue, editRange(issue, fullText, chunk.offset + at));
       issue.text = fullText.slice(issue.start, issue.end);
       if (issue.replacement !== null && issue.replacement === issue.text) continue;
       issue.id = `${issue.ruleId}:${issue.start}:${issue.end}`;
       issue.key = `${issue.ruleId}|${issue.text.toLowerCase()}|${issue.message}`;
-      issues.push(VoiceGuard.protect(issue, fullText));
+      issues.push(guardIssue(issue, fullText));
     }
     return { issues, dropped };
   }
@@ -396,32 +436,74 @@
    * Keep only the words that change ("They was home" -> "was"). A deleted
    * whole word takes one neighbouring space with it, so no double space is left.
    */
-  function narrowEdit(issue, fullText, at) {
-    const quote = issue.anchor.quote;
-    const narrowed = VoiceGuard.narrow(quote, issue.replacement);
+  /**
+   * The voice guard first, so a sentence deletion keeps its own reason; then a
+   * delete that quotes words and punctuation becomes a message only.
+   */
+  function guardIssue(issue, fullText) {
+    let guarded = VoiceGuard.protect(issue, fullText);
+    if (guarded.unclearDelete && guarded.replacement === '') {
+      guarded = Object.assign({}, guarded, { replacement: null, suggestion: null, severity: 'suggestion',
+        guard: 'It is unclear whether to delete the words or only the punctuation.' });
+    }
+    delete guarded.unclearDelete;
+    return guarded;
+  }
+
+  function narrowEdit(issue) {
+    const narrowed = VoiceGuard.narrow(issue.anchor.quote, issue.replacement);
     issue.anchor.trimStart = narrowed.trimStart;
     issue.anchor.trimEnd = narrowed.trimEnd;
     issue.replacement = narrowed.replacement;
-    const from = at + narrowed.trimStart;
-    const to = at + quote.length - narrowed.trimEnd;
-    const bareWord = to > from && WORDISH.test(fullText[from]) && WORDISH.test(fullText[to - 1]);
-    if (issue.replacement !== '' || !bareWord || !wordBounded(fullText, from, to - from)) return;
-    if (fullText[from - 1] === ' ') issue.anchor.trimStart -= 1;
-    else if (fullText[to] === ' ') issue.anchor.trimEnd -= 1;
   }
 
-  /** After the text changes, find each AI issue again or drop it. */
-  function relocateIssues(text, issues) {
+  /** The edit's range for the quote at `at`, judged against the text as it is now. */
+  function editRange(issue, text, at) {
+    let start = at + (issue.anchor.trimStart || 0);
+    let end = at + issue.anchor.quote.length - (issue.anchor.trimEnd || 0);
+    const bareWord = end > start && WORDISH.test(text[start]) && WORDISH.test(text[end - 1]);
+    if (issue.replacement === '' && bareWord && wordBounded(text, start, end - start)) {
+      if (text[start - 1] === ' ') start -= 1;
+      else if (text[end] === ' ') end += 1;
+    }
+    return { quoteAt: at, start, end };
+  }
+
+  /**
+   * After the text changes, find each AI issue again or drop it. With the text
+   * the issues were last placed in (prevText), an issue outside the edited
+   * region keeps its exact place; others are searched for again.
+   */
+  function relocateIssues(text, issues, prevText) {
     const out = [];
     const used = new Set();
+    let p = 0;
+    let s = 0;
+    const known = typeof prevText === 'string';
+    if (known) {
+      const max = Math.min(prevText.length, text.length);
+      while (p < max && prevText[p] === text[p]) p++;
+      while (s < max - p && prevText[prevText.length - 1 - s] === text[text.length - 1 - s]) s++;
+    }
+    const delta = known ? text.length - prevText.length : 0;
+    const keyOf = i => `${fold(i.anchor.quote).trim()}\u0000${fold(i.anchor.context || '')}`;
+    const copies = new Map();
+    for (const i of issues) copies.set(keyOf(i), (copies.get(keyOf(i)) || 0) + 1);
     for (const issue of issues) {
-      const at = findAnchor(text, issue.anchor.quote, issue.anchor.context, used);
+      const len = issue.anchor.quote.length;
+      let at = -1;
+      if (known && typeof issue.start === 'number') {
+        const was = issue.quoteAt;
+        if (was + len <= p) at = was;
+        else if (was >= prevText.length - s) at = was + delta;
+        if (at >= 0 && (used.has(at) || fold(text.slice(at, at + len)) !== fold(issue.anchor.quote))) at = -1;
+      }
+      if (at < 0) at = findAnchor(text, issue.anchor.quote, issue.anchor.context, used, copies.get(keyOf(issue)));
       if (at < 0) continue;
       used.add(at);
-      const start = at + (issue.anchor.trimStart || 0);
-      const end = at + issue.anchor.quote.length - (issue.anchor.trimEnd || 0);
+      const { quoteAt, start, end } = editRange(issue, text, at);
       out.push(VoiceGuard.protect(Object.assign({}, issue, {
-        start, end, text: text.slice(start, end), id: `${issue.ruleId}:${start}:${end}`
+        quoteAt, start, end, text: text.slice(start, end), id: `${issue.ruleId}:${start}:${end}`
       }), text));
     }
     return out;

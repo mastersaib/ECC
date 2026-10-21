@@ -110,10 +110,12 @@ and always suggestions: Galley shows the proposed wording but never applies
 it for you.
 
 **Verb tense.** The rules fix wrong participles (*had went*, *I seen*) and
-suggest a fix for tense slips between two verbs of one subject (*She
-grabbed her coat and runs out*), in narration only. A past event beside a
-present state can be right (*She grew up in Lagos and speaks four
-languages*), so tense shifts are always yours to accept one by one. Claude also checks the narrative tense of
+suggest a fix for tense slips between two verbs of one third-person subject
+(*She grabbed her coat and runs out*), in narration only. A past event beside
+a present state can be right (*She grew up in Lagos and speaks four
+languages*), so tense shifts are always suggestions, yours to accept one by
+one. A repeated word that may be deliberate (*very very*, *bye bye*, or a
+capitalized second copy) is a suggestion too, never part of Accept all. Claude also checks the narrative tense of
 each passage and fixes only the verb that slips, never dialogue, and leaves
 deliberate shifts (flashbacks, general truths) alone.
 

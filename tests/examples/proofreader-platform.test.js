@@ -337,6 +337,21 @@ async function runTests() {
     }
   });
 
+  await t('merge3 never duplicates a paragraph both writers moved', () => {
+    const r = Merge.merge3('Anna woke early.\n\nRain fell all day.\n\nNight came.',
+      'Rain fell all day.\n\nAnna woke early.\n\nNight came.', 'Rain fell all day.\n\nNight came.\n\nAnna woke early.');
+    assert.strictEqual(r.text.split('Anna woke early.').length, 2);
+  });
+
+  await t('an AI quote whose spacing differs from the text is dropped, not misplaced', () => {
+    const text = 'The boys  was late again.';
+    const issue = aiFix(text, { quote: 'boys was', context: 'The boys was late again.', action: 'replace', replacement: 'boys were' });
+    assert.ok(issue === null || Engine.applyFix(text, issue) === 'The boys  were late again.');
+    const echo = '"He don\'t know nothing." Pa spat.\n\nThat night I lay awake. He don\'t know nothing. The words went round.';
+    const e = aiFix(echo, { quote: "He don't", context: "He don't know nothing.", action: 'replace', replacement: "He doesn't" });
+    assert.ok(e === null || !Engine.applyFix(echo, e).startsWith('"He doesn'), 'the dialogue copy is never changed');
+  });
+
   await t('merge3 handles inserts and deletes on both sides', () => {
     assert.strictEqual(Merge.merge3('A\nB\nC', 'X\nA\nB\nC', 'A\nC\nY').text, 'X\nA\nC\nY');
   });

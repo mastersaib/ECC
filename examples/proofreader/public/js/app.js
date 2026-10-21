@@ -143,7 +143,8 @@
     const started = performance.now();
     state.result = Engine.check(text, state.settings);
     state.ruleIssues = state.result.issues;
-    state.aiIssues = AI.relocateIssues(text, state.aiIssues);
+    state.aiIssues = AI.relocateIssues(text, state.aiIssues, state.aiText);
+    state.aiText = text;
     const elapsed = Math.round(performance.now() - started);
     renderAll();
     $('#check-time').textContent = `Checked in ${elapsed} ms`;
@@ -726,7 +727,8 @@
         found.push(...located.issues);
         dropped += located.dropped;
       }
-      state.aiIssues = AI.relocateIssues(editor.text, found);
+      state.aiIssues = AI.relocateIssues(editor.text, found, text);
+      state.aiText = editor.text;
       runCheck();
       const extra = dropped ? ` ${dropped} could not be matched to the text and were skipped.` : '';
       setAiStatus(`Claude added ${state.aiIssues.length} finding${state.aiIssues.length === 1 ? '' : 's'}.${extra}`, false);
