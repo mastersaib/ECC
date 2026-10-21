@@ -5,7 +5,8 @@ guide. It marks errors in place without flattening the author's voice. A
 local rule engine runs as you type, works offline and needs no account. An
 optional Claude pass catches what patterns cannot: agreement, tense, wrong
 words, comma splices, italics for thoughts and foreign words, and, if you
-ask, minimal flow edits.
+ask, flow suggestions. Galley fixes mechanics; it never deletes or rewrites
+the author's sentences.
 
 ```
 public/            the app (plain HTML, CSS and browser JavaScript, no build step)
@@ -38,6 +39,7 @@ stays on the server; the browser never sees it.
 |---|---|
 | Spelling | Common typos (*definately*, *recieve*), missing apostrophes (*dont*, *theyre*), dialect spelling (*color/colour*, *organize/organise*, *traveled/travelled*, *defense/defence*, *program/programme*) |
 | Grammar | *a/an* by sound (*an hour*, *a university*, *an herb* in American English only), *its/it's*, *your/you're*, *there/their*, *than/then*, *should of*, repeated words, misheard phrases (*for all intensive purposes*) |
+| Verb tense | Wrong participles (*had went*, *have drank*, *I seen*), tense slips between two verbs of one subject (*grabbed her coat and runs out*) |
 | Punctuation | Spacing, doubled marks, dialogue tags (`"Yes" he said` / `"No." she replied`), unclosed quotations across paragraphs, serial comma, dash style, number ranges, hyphens after *-ly* adverbs |
 | Capitalization | Pronoun *I*, sentence and paragraph starts, days and months |
 | Style guide | Numbers in words or numerals, percent, dates, times, *Mr./Mr*, *U.S./US*, *e.g.,* |
@@ -78,6 +80,21 @@ spelling with Chicago punctuation, and the style sheet tab says so.
 
 ## Protecting the author's voice
 
+**Galley never deletes or rewrites your sentences.** This is enforced in
+code (`public/lib/voice-guard.js`), not just requested from the AI. A fix
+that Accept can apply:
+
+- removes at most one of your words (a doubled *the the*),
+- changes at most four words in all, counting each word taken out and each
+  word put in (*they was* to *they were* is two),
+- never deletes a sentence.
+
+Punctuation, capitalization and spacing fixes are always allowed. Anything
+larger, from the rules or from Claude, is shown as a suggestion with the
+reason (*"It would delete a whole sentence"*), and only you can make it.
+Claude's fixes are trimmed to the words that change, so accepting *they
+were* touches only *was*.
+
 **Creative** mode is for fiction, memoir and essays. Nonstandard grammar
 inside dialogue is never flagged. In narration it appears only as a note
 (*"He don't care"*). Genuine slips inside dialogue, such as *should of*,
@@ -88,9 +105,15 @@ sentence with *And*, split infinitives, final prepositions, the passive voice.
 contractions, slang and very long sentences outside quotations. APA and MLA
 switch to Formal automatically.
 
-**Flow suggestions** (AI check only) are opt-in. Claude is told to keep the
-author's words and meaning, change as little as possible, and offer at most
-one suggestion per paragraph.
+**Flow suggestions** (AI check only) are opt-in, at most one per paragraph,
+and always suggestions: Galley shows the proposed wording but never applies
+it for you.
+
+**Verb tense.** The rules fix wrong participles (*had went*, *I seen*) and
+tense slips between two verbs of one subject (*She grabbed her coat and
+runs out*), in narration only. Claude also checks the narrative tense of
+each passage and fixes only the verb that slips, never dialogue, and leaves
+deliberate shifts (flashbacks, general truths) alone.
 
 ## Using the app
 
@@ -99,8 +122,9 @@ one suggestion per paragraph.
   the same finding for the session; **Undo fix** reverts. Keyboard:
   Alt+Down and Alt+Up step through findings, Alt+Enter accepts,
   Alt+Backspace stets.
-- **Filter** by type with the chips. **Accept all** applies every fix in the
-  current filter, after a confirmation click.
+- **Filter** by type with the chips. **Accept all** applies every rule fix
+  in the current filter, after a confirmation click. Claude's findings are
+  accepted one at a time.
 - **Mark italics** with `*asterisks*`. Exports turn them into real italics.
 - **Dashboard.** Errors and warnings per 1,000 words over time, findings by
   type, and recurring issues with examples. **Explain my patterns** asks

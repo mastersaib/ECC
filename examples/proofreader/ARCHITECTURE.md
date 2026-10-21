@@ -17,6 +17,8 @@ flowchart LR
       ENG[engine.js]
       RC[rules-core.js]
       RS[rules-style.js]
+      RT[rules-tense.js]
+      VG[voice-guard.js]
       SP[spelling.js]
       SY[styles.js]
       WL[wordlists.js]
@@ -33,8 +35,9 @@ flowchart LR
 
   UI --> APP --> ED
   APP --> PAN
-  APP --> ENG --> RC & RS
+  APP --> ENG --> RC & RS & RT
   RC & RS --> SP & WL
+  ENG & AIL --> VG
   ENG --> SY
   APP --> AIL
   APP --> SN --> MG
@@ -73,6 +76,37 @@ tests drive the same code the page runs.
 An issue with `start === end` is an insertion; `replacement === ''` is a
 deletion; `replacement === null` is advice only.
 
+## The voice guard
+
+`voice-guard.js` is what keeps Galley a proofreader rather than a rewriter.
+`review(text, start, end, replacement)` allows an edit only if:
+
+1. it does not delete a sentence: no sentence may have all its words inside
+   the edit while its letters are missing from the replacement (joining two
+   sentences with a comma keeps their words, so it passes; so does
+   *U.S.* to *US*, where *S.* only looks like a sentence);
+2. it removes at most one of the author's words (word count before minus
+   after);
+3. it changes at most four words in all: words taken out plus words put in,
+   measured by a word-level longest common subsequence.
+
+An edit that keeps the same letters and digits (punctuation, case, spacing)
+always passes. `protect(issue, text)` turns a fix that fails into
+`{ replacement: null, suggestion, guard: reason }` and caps its severity at
+suggestion, so it is shown but cannot be accepted.
+
+It is applied at every layer: the engine protects every rule issue as it is
+reported, `locateIssues` and `relocateIssues` protect every AI issue,
+`applyFix` (and so `applyFixes`) refuses any edit `review` rejects, and the
+page's Accept checks again before writing. **Accept all** applies rule fixes
+only. The limits were set from the rule engine's own largest fixes
+(*18:30* to *6:30 p.m.* changes four words); no rule fix is downgraded.
+
+`narrow(original, replacement)` trims an AI edit to whole words that differ,
+so a quoted *They was home* with *They were home* becomes *was* to *were*.
+The trimmed offsets are stored in the issue's anchor so relocation after
+edits keeps the same span.
+
 ## AI integration
 
 The page builds a prompt from structured inputs with `ai.buildProofreadPrompt`.
@@ -81,7 +115,16 @@ paragraph boundaries. Rule findings inside the chunk go along so Claude does
 not repeat them. Claude replies with quotes, not offsets. `ai.locateIssues`
 finds each quote in the text, using the quoted sentence to tell repeats apart,
 and drops any it cannot find. After edits, `relocateIssues` finds each AI
-finding again or drops it.
+finding again or drops it. Both run the voice guard (above). Flow
+suggestions and notes are always suggestions: their proposed wording is
+kept in `suggestion`, never in `replacement`.
+
+The prompt limits Claude to mechanics: grammar, verb tense, punctuation,
+spelling, capitalization and consistency. *Delete* is allowed only for a
+doubled word or a stray mark, and anything larger than the guard's limits
+must come back as a note. Its tense section asks Claude to infer the
+narrative tense from the narration, fix only the verb that slips, leave
+dialogue alone and keep deliberate shifts.
 
 Two transports share that prompt:
 
