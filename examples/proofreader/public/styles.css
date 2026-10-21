@@ -460,6 +460,15 @@ body[data-ai="none"] .ai-controls { display: none; }
 .change ins { color: var(--good); text-decoration: none; border-bottom: 1.5px solid var(--good); background: color-mix(in srgb, var(--good) 10%, transparent); padding: 0 1px; }
 .change .caret { color: var(--accent); font-weight: 700; }
 .change .mark-delete { color: var(--danger); font-family: var(--font-mono); padding: 0 2px; }
+.change mark.flagged { color: inherit; background: var(--accent-soft); border-bottom: 1.5px dotted var(--accent); padding: 0 1px; }
+/* Changes larger than Galley applies: shown as the author's choice. */
+.change-group { display: grid; gap: 4px; }
+.suggestion { margin: 0; font-family: var(--font-text); font-size: 0.9375rem; line-height: 1.5; overflow-wrap: anywhere; }
+.suggestion-label { display: block; font-family: var(--font-ui); font-size: 0.75rem; font-weight: 700; color: var(--ink-2); }
+.suggestion q { quotes: '\201C' '\201D'; }
+.guard-note { margin: 0; font-size: 0.75rem; color: var(--ink-3); }
+.fb-text .suggestion { max-height: 4.6em; overflow: hidden; }
+.fb-text .guard-note { display: none; }
 .card details { font-size: 0.875rem; color: var(--ink-2); }
 .card summary { cursor: pointer; color: var(--accent); font-weight: 600; width: max-content; }
 .card details p { margin: 4px 0 0; }

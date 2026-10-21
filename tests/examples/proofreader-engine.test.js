@@ -348,6 +348,109 @@ function runTests() {
     for (let n = 0; n <= 100; n++) assert.strictEqual(Words.wordsToNumber(Words.numberToWords(n)), n);
   });
 
+  console.log('\nVoice guard (no fix may delete or rewrite the author\'s sentences):');
+
+  const Guard = require(path.join(LIB, 'voice-guard'));
+  const verdict = (text, quote, replacement, from) => {
+    const at = text.indexOf(quote, from || 0);
+    const v = Guard.review(text, at, at + quote.length, replacement);
+    return v.ok ? 'ok' : v.reason;
+  };
+
+  t('minimal grammar, tense and punctuation fixes pass', () => {
+    assert.strictEqual(verdict('They was home.', 'was', 'were'), 'ok');
+    assert.strictEqual(verdict('I saw the the dog.', ' the', '', 9), 'ok');
+    assert.strictEqual(verdict('Me and him went out.', 'Me and him', 'He and I'), 'ok');
+    assert.strictEqual(verdict('She grabbed her coat and runs out.', 'runs', 'ran'), 'ok');
+    assert.strictEqual(verdict('He left. And she stayed.', 'He left. And she stayed.', 'He left, and she stayed.'), 'ok');
+    assert.strictEqual(verdict('We met at 18:30 sharp.', '18:30', '6:30 p.m.'), 'ok');
+    assert.strictEqual(verdict('The U.S. Army.', 'U.S.', 'US'), 'ok');
+  });
+
+  t('deleting a sentence is refused, however short', () => {
+    assert.strictEqual(verdict('Yes. She stayed.', 'Yes. ', ''), 'It would delete a whole sentence.');
+    assert.strictEqual(verdict('He left at dawn. She stayed.', 'He left at dawn. ', ''), 'It would delete a whole sentence.');
+    assert.strictEqual(verdict('Yes. No. Maybe.', 'Yes. No.', 'Yes.'), 'It would delete a whole sentence.');
+    assert.strictEqual(verdict('"Go." He went.', '"Go." ', ''), 'It would delete a whole sentence.');
+  });
+
+  t('cutting or rewriting the author\'s wording is refused', () => {
+    assert.strictEqual(verdict('The road was empty and the sky was grey.', ' and the sky was grey', ''), 'It would remove 5 of your words.');
+    assert.match(verdict('She waited by the gate.', 'waited by the gate', 'lingered near the old iron gate, waiting'), /rewrite your wording/);
+    assert.match(verdict('He walked slowly home.', 'walked slowly', 'strolled leisurely along'), /rewrite your wording/);
+  });
+
+  t('the engine keeps oversized rule fixes as suggestions and applyFix enforces the guard', () => {
+    const text = 'Yes. She stayed.';
+    const forced = { start: 0, end: 5, text: 'Yes. ', replacement: '' };
+    assert.strictEqual(Engine.applyFix(text, forced), text);
+    const kept = Engine.protect({ start: 0, end: 5, text: 'Yes. ', replacement: '' }, text);
+    assert.strictEqual(kept.replacement, null);
+    assert.strictEqual(kept.suggestion, '');
+    assert.ok(kept.guard);
+  });
+
+  t('narrow trims an edit to the words that change', () => {
+    assert.deepStrictEqual(Guard.narrow('They was home', 'They were home'), { trimStart: 5, trimEnd: 5, replacement: 'were' });
+    assert.deepStrictEqual(Guard.narrow('Hello how are you', 'Hello, how are you'), { trimStart: 5, trimEnd: 12, replacement: ',' });
+    assert.deepStrictEqual(Guard.narrow('color', 'colour'), { trimStart: 0, trimEnd: 0, replacement: 'colour' });
+  });
+
+  t('no rule fix in the sample manuscript is downgraded by the guard', () => {
+    const sample = 'Their going too the store tomorow. Its a nice day, isnt it? We was late. I seen it. She had went home. She grabbed her coat and runs out. The the end.';
+    for (const style of ['cmos', 'ap', 'harts', 'house']) {
+      for (const issue of check(sample, { style })) assert.ok(!issue.guard, `${issue.ruleId}: ${issue.guard}`);
+    }
+  });
+
+  console.log('\nVerb tense:');
+
+  const tense = (text, options) => check(text, Object.assign({ mode: 'formal' }, options || {}))
+    .filter(i => i.ruleId === 'tense-shift' || i.ruleId === 'verb-form')
+    .map(i => `${i.text}->${i.replacement}`);
+
+  t('a tense shift between two verbs of one subject is fixed in the second verb', () => {
+    assert.deepStrictEqual(tense('She grabbed her coat and runs out the door.'), ['runs->ran']);
+    assert.deepStrictEqual(tense('He went to the store and buys milk.'), ['buys->bought']);
+    assert.deepStrictEqual(tense('She grabbed her keys, phone and wallet and runs to the car.'), ['runs->ran']);
+    assert.deepStrictEqual(tense('She grabs her coat and ran out.'), ['ran->runs']);
+    assert.deepStrictEqual(tense('I opened the door and see him there.'), ['see->saw']);
+    assert.deepStrictEqual(tense('She took the call and heads out.'), ['heads->headed']);
+  });
+
+  t('tense-shift leaves legitimate time changes, nouns and dialogue alone', () => {
+    for (const text of [
+      '"I grabbed my coat and run," she said.',
+      'She said that the river runs east and flows into the sea.',
+      'She looks tired and worried.',
+      'I think he left and came back.',
+      'He decided to stay and helps nobody.',
+      'They argued and fights broke out.',
+      'She ordered pizza and drinks.',
+      'She packed sandwiches and drinks for the trip.',
+      'He left, and she walks home alone.',
+      'She traded jokes and smiles with him.',
+      'It ran in fits and starts.',
+      'The children laughed and runs were scored.'
+    ]) assert.deepStrictEqual(tense(text), [], text);
+  });
+
+  t('wrong participles are fixed; "Are you done?" is not', () => {
+    assert.deepStrictEqual(tense('They had went home early.'), ['went->gone']);
+    assert.deepStrictEqual(tense('I have drank too much coffee.'), ['drank->drunk']);
+    assert.deepStrictEqual(tense('She hadn\'t came back yet.'), ['came->come']);
+    assert.deepStrictEqual(tense('I seen it with my own eyes.'), ['seen->saw']);
+    for (const text of ['Are you done?', 'Have you seen my keys?', 'I had a saw and a hammer.', 'She has got a new car.']) {
+      assert.deepStrictEqual(tense(text), [], text);
+    }
+  });
+
+  t('in creative writing, dialect participles in narration are information only', () => {
+    const issue = check('They had went home early.', { mode: 'creative' }).find(i => i.ruleId === 'verb-form');
+    assert.strictEqual(issue.severity, 'info');
+    assert.ok(!check('"We had went," he said.', { mode: 'creative' }).some(i => i.ruleId === 'verb-form'));
+  });
+
   t('a 60,000-character chapter checks in under two seconds', () => {
     const para = 'She said, "I know the the colour of the theatre," and left at 18:30 with 3 friends, 2 dogs and a cat. ';
     const text = Array.from({ length: 600 }, () => para).join('\n');

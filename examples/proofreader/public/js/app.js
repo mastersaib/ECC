@@ -218,14 +218,27 @@
   function changeLine(issue) {
     const ctx = contextFor(issue);
     const parts = [el('span', { class: 'ctx', text: `…${ctx.before}` })];
-    if (issue.text) parts.push(el('del', { text: issue.text }));
+    const advice = issue.replacement === null || issue.replacement === undefined;
+    // Advice is not a deletion: mark the words instead of striking them out.
+    if (issue.text) parts.push(el(advice ? 'mark' : 'del', { class: advice ? 'flagged' : null, text: issue.text }));
     if (issue.replacement !== null && issue.replacement !== undefined) {
       if (issue.replacement === '') parts.push(el('span', { class: 'mark-delete', title: 'Delete', text: '␡' }));
       else parts.push(el('ins', { text: issue.replacement, title: issue.start === issue.end ? 'Insert' : 'Replace with' }));
       if (issue.start === issue.end) parts.unshift(el('span', { class: 'caret', 'aria-hidden': 'true', text: '‸' }));
     }
     parts.push(el('span', { class: 'ctx', text: `${ctx.after}…` }));
-    return el('p', { class: 'change' }, parts);
+    const line = el('p', { class: 'change' }, parts);
+    if (issue.replacement !== null && issue.replacement !== undefined) return line;
+    if (issue.suggestion === null || issue.suggestion === undefined) return line;
+    // A larger change than Galley applies: show it, leave the words to the author.
+    return el('div', { class: 'change-group' }, [
+      line,
+      el('p', { class: 'suggestion' }, [
+        el('span', { class: 'suggestion-label', text: issue.suggestion ? 'Suggested wording, yours to apply:' : 'Suggested: delete this, if you agree.' }),
+        issue.suggestion ? el('q', { text: issue.suggestion }) : null
+      ]),
+      issue.guard ? el('p', { class: 'guard-note', text: `${issue.guard} Galley never changes that much of your text by itself.` }) : null
+    ]);
   }
 
   function renderCards(visible) {
@@ -273,7 +286,8 @@
 
   let bulkArmed = null;
   function renderBulk(visible) {
-    const fixable = visible.filter(i => i.replacement !== null && i.replacement !== undefined);
+    // Rule fixes only: AI findings are judgment calls, so each is accepted on its own.
+    const fixable = visible.filter(i => i.replacement !== null && i.replacement !== undefined && i.source !== 'ai');
     const box = $('#bulk');
     if (fixable.length < 2 || (state.store && !state.store.me.canWrite)) {
       box.replaceChildren();
@@ -283,7 +297,8 @@
     const armed = bulkArmed && bulkArmed > Date.now();
     box.replaceChildren(el('button', {
       class: `btn small${armed ? ' danger' : ''}`,
-      text: armed ? `Confirm: apply ${fixable.length} fixes` : `Accept all ${fixable.length} ${scope === 'all' ? '' : `${scope} `}fixes`,
+      text: armed ? `Confirm: apply ${fixable.length} fixes` : `Accept all ${fixable.length} ${scope === 'all' ? '' : `${scope} `}rule fixes`,
+      title: 'Applies the rule-based fixes listed here. AI findings are accepted one at a time.',
       onclick: () => {
         if (!armed) {
           bulkArmed = Date.now() + 4000;
@@ -402,6 +417,11 @@
     if (!issue || issue.replacement === null || issue.replacement === undefined) return;
     if (editor.text.slice(issue.start, issue.end) !== issue.text) {
       runCheck();
+      return;
+    }
+    const verdict = Engine.reviewEdit(editor.text, issue.start, issue.end, issue.replacement);
+    if (!verdict.ok) {
+      toast(`${verdict.reason} Galley keeps your words; make this change by hand if you want it.`);
       return;
     }
     const list = visibleIssues();

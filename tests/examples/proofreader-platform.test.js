@@ -119,9 +119,54 @@ async function runTests() {
     assert.strictEqual(dropped, 1);
     assert.strictEqual(issues[0].start, 13);
     assert.strictEqual(issues[0].replacement, null);
-    assert.strictEqual(text.slice(issues[1].start, issues[1].end), 'they was');
-    assert.strictEqual(issues[1].replacement, 'they were');
+    // Narrowed to the word that changes
+    assert.strictEqual(text.slice(issues[1].start, issues[1].end), 'was');
+    assert.strictEqual(issues[1].replacement, 'were');
     assert.strictEqual(issues[1].source, 'ai');
+  });
+
+  await t('AI fixes never delete or rewrite the author\'s sentences', () => {
+    const text = 'He left at dawn. The road was empty and the sky was grey. She waited by the gate.';
+    const ctx = 'The road was empty and the sky was grey.';
+    const raw = (quote, action, replacement, category) => ({
+      quote, context: quote, action, replacement, category: category || 'grammar', severity: 'error', message: 'm', explanation: 'e'
+    });
+    const { issues } = AI.locateIssues(text, { text, offset: 0 }, {
+      issues: [
+        raw('He left at dawn.', 'delete', ''),
+        raw(ctx, 'replace', 'The road was empty.'),
+        raw('She waited by the gate.', 'replace', 'She lingered near the old iron gate, waiting.'),
+        raw('the sky was grey', 'replace', 'the sky looked grey', 'flow'),
+        raw('was grey', 'replace', 'was gray')
+      ]
+    });
+    const [del, cut, rewrite, flow, spelling] = issues;
+    for (const issue of [del, cut, rewrite]) {
+      assert.strictEqual(issue.replacement, null, `${issue.text} is not applicable`);
+      assert.ok(issue.suggestion !== undefined && issue.guard, 'the proposal is kept as a suggestion with a reason');
+    }
+    assert.strictEqual(del.guard, 'It would delete a whole sentence.');
+    assert.match(cut.guard, /remove 5 of your words/);
+    assert.match(rewrite.guard, /rewrite your wording/);
+    assert.strictEqual(flow.replacement, null, 'flow is always the author\'s call');
+    assert.strictEqual(flow.suggestion, 'the sky looked grey');
+    assert.strictEqual(spelling.text, 'grey');
+    assert.strictEqual(spelling.replacement, 'gray', 'a one-word fix still applies');
+    const Engine = require(path.join(ROOT, 'public', 'lib', 'engine'));
+    const { text: after, applied } = Engine.applyFixes(text, issues.concat(Object.assign({}, del, { replacement: '' })));
+    assert.strictEqual(applied, 1);
+    assert.strictEqual(after, text.replace('was grey', 'was gray'), 'applyFixes refuses a sentence deletion even if forced');
+  });
+
+  await t('AI notes and flow suggestions survive relocation as suggestions', () => {
+    const text = 'Alpha they was here.';
+    const { issues } = AI.locateIssues(text, { text, offset: 0 }, {
+      issues: [{ quote: 'Alpha they was here.', context: 'Alpha they was here.', action: 'note', replacement: 'They were here, Alpha.', category: 'flow', severity: 'suggestion', message: 'm', explanation: 'e' }]
+    });
+    const moved = AI.relocateIssues('Intro. Alpha they was here.', issues);
+    assert.strictEqual(moved[0].replacement, null);
+    assert.strictEqual(moved[0].suggestion, 'They were here, Alpha.');
+    assert.strictEqual(moved[0].start, 7);
   });
 
   await t('relocateIssues follows edits and drops fixed findings', () => {
@@ -130,7 +175,8 @@ async function runTests() {
       issues: [{ quote: 'they was', context: 'Alpha they was here.', action: 'replace', replacement: 'they were', category: 'grammar', severity: 'error', message: 'm', explanation: 'e' }]
     });
     const moved = AI.relocateIssues('New start. Alpha they was here.', issues);
-    assert.strictEqual(moved[0].start, 17);
+    assert.strictEqual(moved[0].start, 22, 'the narrowed span ("was") moves with the text');
+    assert.strictEqual(moved[0].text, 'was');
     assert.strictEqual(AI.relocateIssues('Alpha they were here.', issues).length, 0);
   });
 

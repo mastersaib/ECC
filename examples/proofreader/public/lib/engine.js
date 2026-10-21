@@ -12,12 +12,12 @@
   if (typeof module === 'object' && module.exports) {
     module.exports = factory(
       require('./spelling'), require('./styles'),
-      require('./rules-core'), require('./rules-style')
+      require('./rules-core'), require('./rules-style'), require('./voice-guard'), require('./rules-tense')
     );
   } else {
-    root.GalleyEngine = factory(root.GalleySpelling, root.GalleyStyles, root.GalleyRulesCore, root.GalleyRulesStyle);
+    root.GalleyEngine = factory(root.GalleySpelling, root.GalleyStyles, root.GalleyRulesCore, root.GalleyRulesStyle, root.GalleyVoiceGuard, root.GalleyRulesTense);
   }
-}(typeof globalThis !== 'undefined' ? globalThis : this, function (Spelling, Styles, RulesCore, RulesStyle) {
+}(typeof globalThis !== 'undefined' ? globalThis : this, function (Spelling, Styles, RulesCore, RulesStyle, VoiceGuard, RulesTense) {
   'use strict';
 
   const VERSION = '1.0.0';
@@ -36,7 +36,7 @@
     flow: 'Flow'
   };
   const SEVERITY_RANK = { error: 0, warning: 1, suggestion: 2, info: 3 };
-  const RULES = RulesCore.RULES.concat(RulesStyle.RULES);
+  const RULES = RulesCore.RULES.concat(RulesTense.RULES, RulesStyle.RULES);
   const NON_TERMINAL = new Set([
     'mr', 'mrs', 'ms', 'dr', 'st', 'jr', 'sr', 'prof', 'rev', 'gen', 'col',
     'capt', 'lt', 'sgt', 'mt', 'ft', 'vs', 'cf', 'approx', 'no', 'vol', 'ch',
@@ -246,7 +246,7 @@
         if (issue.replacement !== null && text.slice(issue.start, issue.end) === issue.replacement) return;
         issue.text = text.slice(issue.start, issue.end);
         issue.source = issue.source || 'rules';
-        issues.push(issue);
+        issues.push(VoiceGuard.protect(issue, text));
       }
     };
 
@@ -318,6 +318,8 @@
   function applyFix(text, issue) {
     if (issue.replacement === null || issue.replacement === undefined) return text;
     if (text.slice(issue.start, issue.end) !== issue.text) return text; // stale
+    // The last line of defence for the author's words, whatever made the fix.
+    if (!VoiceGuard.review(text, issue.start, issue.end, issue.replacement).ok) return text;
     return text.slice(0, issue.start) + issue.replacement + text.slice(issue.end);
   }
 
@@ -350,6 +352,8 @@
     RULE_IDS: RULES.map(r => r.id),
     check,
     applyFix,
+    reviewEdit: VoiceGuard.review,
+    protect: VoiceGuard.protect,
     applyFixes,
     smartQuotes,
     findQuoteSpans,

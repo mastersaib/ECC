@@ -6,7 +6,7 @@
  */
 'use strict';
 
-const CACHE = 'galley-v2';
+const CACHE = 'galley-v3';
 const SHELL = [
   './',
   'index.html',
@@ -17,6 +17,8 @@ const SHELL = [
   'lib/wordlists.js',
   'lib/rules-core.js',
   'lib/rules-style.js',
+  'lib/voice-guard.js',
+  'lib/rules-tense.js',
   'lib/engine.js',
   'lib/ai.js',
   'lib/history.js',
